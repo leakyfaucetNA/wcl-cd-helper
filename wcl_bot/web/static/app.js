@@ -538,6 +538,12 @@ async function loadZones() {
     opt.textContent = `${z.name}${z.frozen ? " (frozen)" : ""}`;
     zsel.appendChild(opt);
   }
+  // Default to the current-tier raid (highest-ID non-frozen zone that isn't
+  // a Mythic+ or Delves zone). Falls back to first option if nothing matches.
+  const raid = ZONES
+    .filter((z) => !z.frozen && !/mythic\+|delves/i.test(z.name))
+    .sort((a, b) => b.id - a.id)[0];
+  if (raid) zsel.value = String(raid.id);
   zsel.addEventListener("change", populateBosses);
   populateBosses();
 }

@@ -1,8 +1,5 @@
 /* Small overrides on top of Pico.css. */
 
-/* Scale the whole UI down — equivalent to ~75% browser zoom but persistent. */
-html { font-size: 12px; }
-
 .muted { color: var(--pico-muted-color); font-weight: normal; font-size: 0.9em; }
 
 /* Help text under checkbox labels (e.g. "Sync to roster", "Also include
