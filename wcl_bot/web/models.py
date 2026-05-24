@@ -145,6 +145,7 @@ class LogImportRequest(BaseModel):
 
 class LogImportResponse(BaseModel):
     report_code: str
+    fight_id: int | None = None        # set if input URL had #fight=N
     healers: list[GuildRosterMember]
 
 

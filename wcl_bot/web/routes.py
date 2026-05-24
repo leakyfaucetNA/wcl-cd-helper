@@ -119,6 +119,8 @@ async def healer_specs() -> HealerSpecsResponse:
 # changed format historically and may again.
 _REPORT_CODE_FROM_URL = re.compile(r"/reports/([A-Za-z0-9]+)")
 _BARE_REPORT_CODE = re.compile(r"^([A-Za-z0-9]{8,32})$")
+# Fight selector can live in the fragment (#fight=5) or query (?fight=5&...)
+_FIGHT_ID_FROM_URL = re.compile(r"[#?&]fight=(\d+)")
 
 
 def _extract_report_code(s: str) -> str | None:
@@ -130,6 +132,11 @@ def _extract_report_code(s: str) -> str | None:
     if m:
         return m.group(1)
     return None
+
+
+def _extract_fight_id(s: str) -> int | None:
+    m = _FIGHT_ID_FROM_URL.search(s.strip())
+    return int(m.group(1)) if m else None
 
 
 def _normalize_realm_slug(name: str) -> str:
@@ -233,11 +240,15 @@ async def guild_lookup(
 async def log_healers(
     request: Request, payload: LogImportRequest
 ) -> LogImportResponse:
-    """Pull every healer that appeared on a kill in a single WCL report.
+    """Pull healers from a single WCL report.
 
     Accepts either a full WCL URL (https://www.warcraftlogs.com/reports/...)
-    or the bare report code. Same shape as /api/guild's `members` so the
-    frontend can reuse roster-merging logic."""
+    or the bare report code. If the URL contains `#fight=N`, only that
+    fight is scanned (useful for grabbing the comp from a specific pull);
+    otherwise every kill in the report is aggregated.
+
+    Same shape as /api/guild's `members` so the frontend can reuse
+    roster-merging logic."""
     from wcl_bot.matcher.parsing import parse_healers
 
     code = _extract_report_code(payload.log)
@@ -246,14 +257,22 @@ async def log_healers(
             status_code=400,
             detail=f"Couldn't extract a WCL report code from {payload.log!r}",
         )
+    fight_id = _extract_fight_id(payload.log)
 
     client = _client(request)
     try:
-        pd = await client.execute(
-            queries.GET_REPORT_PLAYER_DETAILS_ALL_KILLS,
-            {"code": code},
-            cache_ttl_seconds=CACHE_TTL_STATIC,
-        )
+        if fight_id is not None:
+            pd = await client.execute(
+                queries.GET_REPORT_PLAYER_DETAILS,
+                {"code": code, "fightIDs": [fight_id]},
+                cache_ttl_seconds=CACHE_TTL_STATIC,
+            )
+        else:
+            pd = await client.execute(
+                queries.GET_REPORT_PLAYER_DETAILS_ALL_KILLS,
+                {"code": code},
+                cache_ttl_seconds=CACHE_TTL_STATIC,
+            )
         healers = parse_healers(pd)
     except WCLError as exc:
         raise HTTPException(status_code=502, detail=f"WCL: {exc}") from exc
@@ -269,7 +288,7 @@ async def log_healers(
         ],
         key=lambda m: (m.wow_class, m.name),
     )
-    return LogImportResponse(report_code=code, healers=members)
+    return LogImportResponse(report_code=code, fight_id=fight_id, healers=members)
 
 
 @router.get("/zones", response_model=ZonesResponse)

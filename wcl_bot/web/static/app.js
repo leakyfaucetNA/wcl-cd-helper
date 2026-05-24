@@ -410,8 +410,9 @@ async function doLogImport() {
       method: "POST",
       body: JSON.stringify({ log }),
     });
+    const scope = data.fight_id != null ? `fight ${data.fight_id} of ${data.report_code}` : `${data.report_code} (all kills)`;
     $("log-import-status").textContent =
-      `Imported ${data.healers.length} healer(s) from ${data.report_code}.`;
+      `Imported ${data.healers.length} healer(s) from ${scope}.`;
     for (const m of data.healers) {
       upsertRosterMember({ name: m.name, wow_class: m.wow_class, specs: m.specs });
     }
