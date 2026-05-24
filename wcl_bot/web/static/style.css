@@ -1,6 +1,19 @@
 /* Small overrides on top of Pico.css. */
 
+/* Scale the whole UI down — equivalent to ~75% browser zoom but persistent. */
+html { font-size: 12px; }
+
 .muted { color: var(--pico-muted-color); font-weight: normal; font-size: 0.9em; }
+
+/* Help text under checkbox labels (e.g. "Sync to roster", "Also include
+   fights with more healers") was overlapping the label. Force it onto its
+   own line aligned under the label text. */
+fieldset label > small.muted {
+  display: block;
+  margin-top: 0.15rem;
+  padding-left: 1.75rem;
+  line-height: 1.25;
+}
 
 /* ---- Tab bar ---- */
 .tabbar {
