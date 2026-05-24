@@ -73,6 +73,11 @@ function saveRoster() {
       status(`Roster save failed: ${e.message}`, true);
     }
   }, 400);
+  // If the search panel is currently mirroring the roster, refresh
+  // its spec selections too.
+  if ($("sync-roster-input")?.checked) {
+    syncSpecsFromRoster();
+  }
 }
 
 function upsertRosterMember(member) {
@@ -210,6 +215,55 @@ function selectedHealers() {
       count,
     };
   });
+}
+
+// Overwrite the search-panel's spec selections from the current ROSTER.
+// Each roster member contributes their FIRST listed spec to the comp; a
+// hybrid Priest with [Holy, Discipline] counts as a Holy Priest unless
+// you reorder them in the roster (drag/manual reorder isn't implemented;
+// untick "Sync to roster" if you need a different layout).
+function syncSpecsFromRoster() {
+  document.querySelectorAll(".spec-row").forEach((row) => {
+    const cb = row.querySelector(".spec-checkbox");
+    const count = row.querySelector(".spec-count");
+    cb.checked = false;
+    count.value = 1;
+    row.classList.add("disabled");
+    count.disabled = true;
+  });
+  const counts = new Map(); // "class|spec" -> count
+  for (const m of ROSTER) {
+    const spec = m.specs?.[0];
+    if (!spec) continue;
+    const key = `${m.wow_class}|${spec}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  for (const [key, n] of counts) {
+    const [cls, spec] = key.split("|");
+    const row = [...document.querySelectorAll(".spec-row")].find(
+      (r) => r.dataset.class === cls && r.dataset.spec === spec
+    );
+    if (!row) continue;
+    row.querySelector(".spec-checkbox").checked = true;
+    row.querySelector(".spec-count").value = n;
+  }
+  updateSpecSummary();
+}
+
+// While sync is on, lock the spec checkboxes + counts so the user can't
+// edit them out of sync with the roster.
+function setSpecGridLocked(locked) {
+  document.querySelectorAll(".spec-checkbox, .spec-count").forEach((el) => {
+    el.disabled = locked;
+  });
+  if (!locked) {
+    // Re-enable based on whether each row's checkbox is checked
+    document.querySelectorAll(".spec-row").forEach((row) => {
+      const cb = row.querySelector(".spec-checkbox");
+      row.querySelector(".spec-count").disabled = !cb.checked;
+      row.classList.toggle("disabled", !cb.checked);
+    });
+  }
 }
 
 function updateSpecSummary() {
@@ -774,6 +828,14 @@ async function boot() {
 
   // Search tab
   $("filter-form").addEventListener("submit", doDiscover);
+  $("sync-roster-input").addEventListener("change", (e) => {
+    if (e.target.checked) {
+      syncSpecsFromRoster();
+      setSpecGridLocked(true);
+    } else {
+      setSpecGridLocked(false);
+    }
+  });
   $("style-select").addEventListener("change", (e) =>
     fetchAndRenderNote(e.target.value)
   );

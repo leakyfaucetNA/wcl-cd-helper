@@ -146,7 +146,12 @@
           <legend><strong>Healers</strong> &mdash; tick the specs in your comp; bump count for duplicates.</legend>
           <div id="spec-list"></div>
           <small id="spec-summary" class="muted">Pick at least one healer.</small>
-          <label style="margin-top: 0.75rem; display: block;">
+          <label style="margin-top: 0.5rem; display: block;">
+            <input type="checkbox" id="sync-roster-input">
+            Sync to roster
+            <small class="muted">(auto-fill from Settings → My roster; locks the boxes above)</small>
+          </label>
+          <label style="margin-top: 0.5rem; display: block;">
             <input type="checkbox" id="include-extra-input">
             Also include fights with <strong>more</strong> healers than my comp
             <small class="muted">(separated by healer count in results)</small>
