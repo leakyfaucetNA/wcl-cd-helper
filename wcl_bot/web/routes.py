@@ -40,6 +40,8 @@ from wcl_bot.web.models import (
     HealerSpecsResponse,
     LogDetailRequest,
     LogDetailResponse,
+    LogImportRequest,
+    LogImportResponse,
     MatchSummary,
     NoteRequest,
     NoteResponse,
@@ -110,6 +112,24 @@ async def healer_specs() -> HealerSpecsResponse:
             for (cls, spec) in HEALER_COOLDOWNS.keys()
         ]
     )
+
+
+# Report codes in WCL URLs are typically 16 chars, but we accept any
+# reasonable alphanumeric run rather than hardcode a length — codes have
+# changed format historically and may again.
+_REPORT_CODE_FROM_URL = re.compile(r"/reports/([A-Za-z0-9]+)")
+_BARE_REPORT_CODE = re.compile(r"^([A-Za-z0-9]{8,32})$")
+
+
+def _extract_report_code(s: str) -> str | None:
+    s = s.strip()
+    m = _REPORT_CODE_FROM_URL.search(s)
+    if m:
+        return m.group(1)
+    m = _BARE_REPORT_CODE.match(s)
+    if m:
+        return m.group(1)
+    return None
 
 
 def _normalize_realm_slug(name: str) -> str:
@@ -207,6 +227,49 @@ async def guild_lookup(
         reports_scanned=scanned,
         members=members,
     )
+
+
+@router.post("/log_healers", response_model=LogImportResponse)
+async def log_healers(
+    request: Request, payload: LogImportRequest
+) -> LogImportResponse:
+    """Pull every healer that appeared on a kill in a single WCL report.
+
+    Accepts either a full WCL URL (https://www.warcraftlogs.com/reports/...)
+    or the bare report code. Same shape as /api/guild's `members` so the
+    frontend can reuse roster-merging logic."""
+    from wcl_bot.matcher.parsing import parse_healers
+
+    code = _extract_report_code(payload.log)
+    if not code:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Couldn't extract a WCL report code from {payload.log!r}",
+        )
+
+    client = _client(request)
+    try:
+        pd = await client.execute(
+            queries.GET_REPORT_PLAYER_DETAILS_ALL_KILLS,
+            {"code": code},
+            cache_ttl_seconds=CACHE_TTL_STATIC,
+        )
+        healers = parse_healers(pd)
+    except WCLError as exc:
+        raise HTTPException(status_code=502, detail=f"WCL: {exc}") from exc
+
+    aggregate: dict[tuple[str, str], set[str]] = {}
+    for h in healers:
+        aggregate.setdefault((h.name, h.wow_class), set()).add(h.spec)
+
+    members = sorted(
+        [
+            GuildRosterMember(name=n, wow_class=c, specs=sorted(s))
+            for (n, c), s in aggregate.items()
+        ],
+        key=lambda m: (m.wow_class, m.name),
+    )
+    return LogImportResponse(report_code=code, healers=members)
 
 
 @router.get("/zones", response_model=ZonesResponse)

@@ -395,6 +395,36 @@ async function doGuildLookup() {
   }
 }
 
+async function doLogImport() {
+  const log = $("log-import-input").value.trim();
+  if (!log) {
+    status("Paste a WCL URL or report code.", true);
+    return;
+  }
+  const btn = $("log-import-btn");
+  btn.setAttribute("aria-busy", "true");
+  btn.disabled = true;
+  $("log-import-status").textContent = "Importing…";
+  try {
+    const data = await api("/api/log_healers", {
+      method: "POST",
+      body: JSON.stringify({ log }),
+    });
+    $("log-import-status").textContent =
+      `Imported ${data.healers.length} healer(s) from ${data.report_code}.`;
+    for (const m of data.healers) {
+      upsertRosterMember({ name: m.name, wow_class: m.wow_class, specs: m.specs });
+    }
+    saveRoster();
+    renderRoster();
+  } catch (e) {
+    $("log-import-status").textContent = `Import failed: ${e.message}`;
+  } finally {
+    btn.removeAttribute("aria-busy");
+    btn.disabled = false;
+  }
+}
+
 function doManualAdd() {
   const name = $("manual-name-input").value.trim();
   const wow_class = $("manual-class-input").value;
@@ -757,6 +787,11 @@ async function boot() {
   $("guild-form").addEventListener("submit", (e) => {
     e.preventDefault();
     doGuildLookup();
+  });
+  $("log-import-btn").addEventListener("click", doLogImport);
+  $("log-import-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    doLogImport();
   });
   $("roster-add-btn").addEventListener("click", doManualAdd);
   $("roster-add-form").addEventListener("submit", (e) => {

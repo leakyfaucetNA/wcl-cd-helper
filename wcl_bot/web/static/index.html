@@ -52,6 +52,19 @@
       </article>
 
       <article>
+        <header><strong>Healer Log Import</strong> <small class="muted">— pull healers directly from one WCL report</small></header>
+        <form id="log-import-form">
+          <label>
+            Log URL or report code
+            <input type="text" id="log-import-input"
+                   placeholder="https://www.warcraftlogs.com/reports/abc123XYZ  or  abc123XYZ" required>
+          </label>
+        </form>
+        <button id="log-import-btn" type="button">Import healers</button>
+        <small id="log-import-status" class="muted" style="display:block;margin-top:0.5rem"></small>
+      </article>
+
+      <article>
         <header>
           <strong>My roster</strong>
           <span id="roster-meta" class="muted"></span>

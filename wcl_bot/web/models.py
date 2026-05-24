@@ -139,6 +139,15 @@ class GuildLookupResponse(BaseModel):
     members: list[GuildRosterMember]
 
 
+class LogImportRequest(BaseModel):
+    log: str = Field(..., description="WCL report URL or report code")
+
+
+class LogImportResponse(BaseModel):
+    report_code: str
+    healers: list[GuildRosterMember]
+
+
 class RosterMember(BaseModel):
     name: str
     wow_class: str
