@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WCL Healer CD Note Builder</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="container">
+    <hgroup>
+      <h1>WCL Healer CD Note Builder</h1>
+      <p>Pick a boss + comp → see matching cross-guild kills → grab the note for the one you like.</p>
+    </hgroup>
+
+    <nav class="tabbar">
+      <button class="tab-btn active" data-tab="search" type="button">Search</button>
+      <button class="tab-btn" data-tab="settings" type="button">Settings</button>
+    </nav>
+
+    <!-- ============= SETTINGS TAB ============= -->
+    <section class="tab-panel" data-tab-panel="settings" hidden>
+      <article>
+        <header><strong>Guild lookup</strong> <small class="muted">— pulls healers from your guild's last few WCL reports</small></header>
+        <form id="guild-form" class="grid">
+          <label>
+            Guild name
+            <input type="text" id="guild-name-input" placeholder="Below Average" required>
+          </label>
+          <label>
+            Server (realm)
+            <input type="text" id="guild-server-input" placeholder="Bleeding Hollow" required>
+          </label>
+          <label>
+            Region
+            <select id="guild-region-input">
+              <option value="US">US</option>
+              <option value="EU">EU</option>
+              <option value="KR">KR</option>
+              <option value="TW">TW</option>
+              <option value="CN">CN</option>
+            </select>
+          </label>
+          <label>
+            Reports to scan
+            <input type="number" id="guild-limit-input" value="3" min="1" max="10">
+          </label>
+        </form>
+        <button id="guild-fetch-btn" type="button">Fetch healers</button>
+        <small id="guild-status" class="muted" style="display:block;margin-top:0.5rem"></small>
+      </article>
+
+      <article>
+        <header>
+          <strong>My roster</strong>
+          <span id="roster-meta" class="muted"></span>
+        </header>
+        <div id="roster-list"></div>
+        <details style="margin-top:0.75rem">
+          <summary>Add a healer manually</summary>
+          <form id="roster-add-form" class="grid" style="margin-top:0.5rem">
+            <label>
+              Name
+              <input type="text" id="manual-name-input" required>
+            </label>
+            <label>
+              Class
+              <select id="manual-class-input"></select>
+            </label>
+            <label>
+              Spec(s)
+              <div id="manual-specs-checks" class="spec-check-row"></div>
+            </label>
+          </form>
+          <button id="roster-add-btn" type="button">Add</button>
+        </details>
+        <div style="margin-top:0.75rem">
+          <button id="roster-clear-btn" type="button" class="secondary outline">Clear roster</button>
+        </div>
+      </article>
+    </section>
+
+    <!-- ============= SEARCH TAB ============= -->
+    <section class="tab-panel" data-tab-panel="search">
+
+    <!-- ============= STEP 1: FILTER ============= -->
+    <article id="filter-panel">
+      <header><strong>1. Filter</strong></header>
+      <form id="filter-form">
+
+        <div class="grid">
+          <label>
+            Zone (raid)
+            <select id="zone-select" required></select>
+          </label>
+          <label>
+            Boss
+            <select id="boss-select" required></select>
+          </label>
+        </div>
+
+        <div class="grid">
+          <label>
+            Difficulty
+            <select id="difficulty-select">
+              <option value="5" selected>Mythic</option>
+              <option value="4">Heroic</option>
+              <option value="3">Normal</option>
+            </select>
+          </label>
+          <label>
+            Metric
+            <select id="metric-select">
+              <option value="execution" selected>Execution (parse %)</option>
+              <option value="speed">Speed (kill time)</option>
+            </select>
+          </label>
+          <label>
+            Region (optional)
+            <select id="region-select">
+              <option value="" selected>All</option>
+              <option value="US">US</option>
+              <option value="EU">EU</option>
+              <option value="KR">KR</option>
+              <option value="TW">TW</option>
+              <option value="CN">CN</option>
+            </select>
+          </label>
+        </div>
+
+        <fieldset>
+          <legend><strong>Healers</strong> &mdash; tick the specs in your comp; bump count for duplicates.</legend>
+          <div id="spec-list"></div>
+          <small id="spec-summary" class="muted">Pick at least one healer.</small>
+          <label style="margin-top: 0.75rem; display: block;">
+            <input type="checkbox" id="include-extra-input">
+            Also include fights with <strong>more</strong> healers than my comp
+            <small class="muted">(separated by healer count in results)</small>
+          </label>
+        </fieldset>
+
+        <details>
+          <summary>Advanced</summary>
+          <div class="grid">
+            <label>
+              Pages
+              <input type="number" id="pages-input" value="20" min="1" max="100">
+            </label>
+            <label>
+              Skip top
+              <input type="number" id="skip-top-input" value="0" min="0">
+            </label>
+            <label>
+              Drop fastest %
+              <input type="number" id="drop-pct-input" value="0.25" min="0" max="1" step="0.05">
+            </label>
+            <label>
+              Outlier threshold (s)
+              <input type="number" id="outlier-input" value="10" min="0" step="0.5">
+            </label>
+          </div>
+        </details>
+
+        <button type="submit" id="discover-btn">Find matching kills</button>
+      </form>
+    </article>
+
+    <!-- ============= STEP 2: RESULTS ============= -->
+    <article id="results-panel" hidden>
+      <header>
+        <strong>2. Matching kills</strong>
+        <span id="results-meta" class="muted"></span>
+      </header>
+      <div id="results-content"></div>
+    </article>
+
+    <!-- ============= STEP 3: NOTE ============= -->
+    <article id="note-panel" hidden>
+      <header>
+        <strong>3. Note</strong>
+        <span id="note-meta" class="muted"></span>
+      </header>
+      <div class="grid note-controls">
+        <label>
+          Style
+          <select id="style-select">
+            <option value="nsrt" selected>Northern Sky Raid Tools (NSRT)</option>
+            <option value="mrt">Method Raid Tools (MRT)</option>
+          </select>
+        </label>
+        <button id="copy-btn" type="button">Copy note</button>
+        <button id="back-btn" type="button" class="secondary">Back to results</button>
+      </div>
+      <div id="note-remap-wrap">
+        <h5 class="remap-heading">Rename healers in this note</h5>
+        <div id="note-remap"></div>
+      </div>
+
+      <textarea id="note-output" rows="20" readonly></textarea>
+    </article>
+
+    </section> <!-- /search tab panel -->
+
+    <div id="status" class="status" hidden></div>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

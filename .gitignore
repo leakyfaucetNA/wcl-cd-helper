@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Editor / OS
+.claude/
+.DS_Store
+.idea/
+.vscode/
+
+# Runtime state (cached on disk by the app)
+.cache/

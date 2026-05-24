@@ -1,0 +1,248 @@
+/* Small overrides on top of Pico.css. */
+
+.muted { color: var(--pico-muted-color); font-weight: normal; font-size: 0.9em; }
+
+/* ---- Tab bar ---- */
+.tabbar {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0 0 1rem;
+  border-bottom: 1px solid var(--pico-card-border-color);
+}
+.tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 0.25rem 0.25rem 0 0;
+  padding: 0.4rem 1rem;
+  margin: 0;
+  color: var(--pico-muted-color);
+  cursor: pointer;
+  font-weight: 500;
+  width: auto;
+}
+.tab-btn:hover { color: var(--pico-color); }
+.tab-btn.active {
+  background: var(--pico-card-background-color);
+  border-color: var(--pico-card-border-color);
+  border-bottom: 1px solid var(--pico-card-background-color);
+  margin-bottom: -1px;
+  color: var(--pico-color);
+}
+
+/* ---- Settings: roster ---- */
+.roster-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1.5fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--pico-card-sectioning-background-color);
+}
+.roster-row:last-child { border-bottom: none; }
+.roster-row input, .roster-row select { margin: 0; padding: 0.2rem 0.4rem; }
+.roster-row .roster-remove-btn {
+  margin: 0;
+  padding: 0.1rem 0.7rem;
+  font-size: 1.1em;
+  line-height: 1;
+}
+.roster-spec-checks {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.85em;
+}
+.roster-spec-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0;
+}
+.roster-spec-check input { margin: 0; }
+
+/* Manual-add spec checkboxes (inline, per selected class) */
+.spec-check-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.4rem 0;
+}
+.spec-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0;
+  font-weight: normal;
+}
+.spec-check input { margin: 0; }
+
+#spec-list {
+  margin: 0.5rem 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.25rem 0.75rem;
+}
+@media (max-width: 900px) { #spec-list { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 500px) { #spec-list { grid-template-columns: 1fr; } }
+
+.spec-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0;
+}
+.spec-row .spec-checkbox { margin: 0; }
+.spec-row .spec-label { flex: 1; }
+.spec-row .spec-count {
+  width: 3.5rem;
+  padding: 0.1rem 0.4rem;
+  margin: 0;
+}
+.spec-row.disabled .spec-label { opacity: 0.45; }
+.spec-row.disabled .spec-count { visibility: hidden; }
+
+/* ----- Per-log healer remap (2x2 grid of dropdown cells) ----- */
+#note-remap-wrap { margin: 0.75rem 0; }
+.remap-heading {
+  margin: 0 0 0.25rem;
+  font-size: 0.95em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--pico-muted-color);
+}
+#note-remap {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+@media (max-width: 700px) { #note-remap { grid-template-columns: 1fr; } }
+
+.remap-cell {
+  border: 1px solid var(--pico-card-border-color);
+  border-radius: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--pico-card-sectioning-background-color);
+}
+.remap-cell-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.remap-cell-head .remap-name { font-weight: 600; font-size: 1.05em; }
+.remap-cell-arrow {
+  color: var(--pico-muted-color);
+  text-align: center;
+  font-size: 1.1em;
+  line-height: 1;
+  margin: 0.15rem 0;
+}
+.remap-select, .remap-manual-input {
+  width: 100%;
+  margin: 0;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.9em;
+}
+.remap-manual-input { margin-top: 0.3rem; }
+
+/* Class-color the remap-name; mirrors the spec-label color scheme. */
+.class-Druid    .remap-name { color: #ff7c0a; }
+.class-Evoker   .remap-name { color: #33937f; }
+.class-Monk     .remap-name { color: #00ff98; }
+.class-Paladin  .remap-name { color: #f48cba; }
+.class-Priest   .remap-name { color: #f0ebe0; }
+.class-Shaman   .remap-name { color: #0070dd; }
+/* Catch-all for DPS classes if they ever appear */
+.class-DeathKnight .remap-name { color: #c41e3a; }
+.class-DemonHunter .remap-name { color: #a330c9; }
+.class-Hunter   .remap-name { color: #aad372; }
+.class-Mage     .remap-name { color: #3fc7eb; }
+.class-Rogue    .remap-name { color: #fff468; }
+.class-Warlock  .remap-name { color: #8788ee; }
+.class-Warrior  .remap-name { color: #c69b6d; }
+
+/* Class color tint on the label text */
+.class-Druid .spec-label { color: #ff7c0a; }
+.class-Evoker .spec-label { color: #33937f; }
+.class-Monk .spec-label { color: #00ff98; }
+.class-Paladin .spec-label { color: #f48cba; }
+.class-Priest .spec-label { color: #f0ebe0; }
+.class-Shaman .spec-label { color: #0070dd; }
+
+table.results-table { width: 100%; font-size: 0.95em; }
+table.results-table tbody tr.match-row { cursor: pointer; }
+table.results-table tbody tr.match-row:hover { background: var(--pico-card-sectioning-background-color); }
+table.results-table tbody tr.match-detail-row { cursor: default; }
+table.results-table tbody tr.match-detail-row:hover { background: inherit; }
+table.results-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+table.results-table .outliers-good { color: #6bd06b; }
+table.results-table .outliers-warn { color: #d0a06b; }
+table.results-table .outliers-bad  { color: #d06b6b; }
+
+.result-group { margin-bottom: 0.75rem; }
+.result-group > summary.group-header {
+  padding: 0.5rem 0.75rem;
+  background: var(--pico-card-sectioning-background-color);
+  border: 1px solid var(--pico-card-border-color);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: 1.05em;
+}
+/* Hide default disclosure triangle on WebKit so we can add our own */
+.result-group > summary::-webkit-details-marker { display: none; }
+.result-group > summary.group-header::before {
+  content: "▸";
+  display: inline-block;
+  width: 1.1em;
+  transition: transform 0.15s ease;
+  color: var(--pico-muted-color);
+}
+.result-group[open] > summary.group-header::before { transform: rotate(90deg); }
+.result-group[open] > summary.group-header {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.result-group > table.results-table {
+  border: 1px solid var(--pico-card-border-color);
+  border-top: 0;
+  border-radius: 0 0 0.25rem 0.25rem;
+}
+
+.match-detail { padding: 0.5rem 1rem; background: var(--pico-card-sectioning-background-color); }
+.detail-table { width: auto; min-width: 360px; margin: 0; font-size: 0.9em; }
+.detail-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Parse percentile colors (WCL convention) */
+.pct-95 { color: #e268a8; font-weight: 600; }   /* legendary */
+.pct-75 { color: #ff8000; }                      /* epic */
+.pct-50 { color: #a335ee; }                      /* rare */
+.pct-25 { color: #0070ff; }                      /* uncommon */
+.pct-0  { color: #888; }                         /* common / low */
+
+.pick-btn { margin: 0; padding: 0.15rem 0.6rem; font-size: 0.85em; }
+
+#note-output {
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 0.85em;
+  white-space: pre;
+  background: #0d1117;
+  color: #c9d1d9;
+}
+
+.note-controls { align-items: end; }
+.note-controls button { margin: 0; }
+
+.status {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.25rem;
+  background: var(--pico-primary);
+  color: white;
+  z-index: 1000;
+}
+.status.error { background: #d06b6b; }
