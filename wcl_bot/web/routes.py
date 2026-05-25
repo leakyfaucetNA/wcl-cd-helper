@@ -689,6 +689,8 @@ async def _fetch_char_fight_parse(
                 "serverSlug": server_slug,
                 "serverRegion": server_region,
                 "encounterID": encounter_id,
+                # WCL defaults to "dps" — we always want healing percentiles.
+                "metric": "hps",
             },
             cache_ttl_seconds=CACHE_TTL_STATIC,
         )

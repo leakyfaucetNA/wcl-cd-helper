@@ -115,10 +115,11 @@ query GetCharacterEncounterRankings(
   $serverSlug: String!
   $serverRegion: String!
   $encounterID: Int!
+  $metric: CharacterRankingMetricType!
 ) {
   characterData {
     character(name: $name, serverSlug: $serverSlug, serverRegion: $serverRegion) {
-      encounterRankings(encounterID: $encounterID)
+      encounterRankings(encounterID: $encounterID, metric: $metric)
     }
   }
 }
