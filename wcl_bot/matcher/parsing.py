@@ -127,6 +127,42 @@ _HEALER_SPECS_LC = {
 }
 
 
+def parse_all_players(blob: Any) -> list[HealerEntry]:
+    """Like parse_healers but returns tanks + healers + dps. The class is
+    misnamed (HealerEntry) but covers any player — same fields apply.
+
+    Used by the cooldown extractor when 'Include DPS raid CDs' is on, so
+    we can track raid utility (Rallying Cry, AMZ, Darkness, etc.) cast
+    by non-healer players.
+    """
+    if not isinstance(blob, dict):
+        raise WCLSchemaError(
+            f"playerDetails: expected dict, got {type(blob).__name__}"
+        )
+    pd = _find_player_details(blob)
+    if pd is None:
+        raise WCLSchemaError(
+            f"playerDetails: could not locate playerDetails object; top-level keys: {list(blob)}"
+        )
+
+    out: list[HealerEntry] = []
+    if isinstance(pd, dict):
+        for role in ("tanks", "healers", "dps"):
+            for entry in (pd.get(role) or []):
+                try:
+                    out.append(_to_healer_entry(entry))
+                except (KeyError, ValueError):
+                    continue
+        # Fallback for a flat-entries shape (uncommon path).
+        if not out and isinstance(pd.get("entries"), list):
+            for entry in pd["entries"]:
+                try:
+                    out.append(_to_healer_entry(entry))
+                except (KeyError, ValueError):
+                    continue
+    return out
+
+
 def parse_healers(blob: Any) -> list[HealerEntry]:
     """Extract HealerEntry objects from a playerDetails response.
 

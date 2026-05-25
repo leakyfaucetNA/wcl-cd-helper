@@ -45,14 +45,18 @@ async function loadHealerSpecs() {
 const LOG_OVERRIDES = new Map();
 
 // Persistent settings (server-side).
-let TRACKED_SPELLS = [];                  // [{spell_id, name, label, category, wow_class, spec}]
+let TRACKED_SPELLS = [];                  // [{spell_id, name, label, category, wow_class, spec, group}]
 const EXCLUDED_SPELL_IDS = new Set();     // mirror of settings.excluded_spell_ids
+let INCLUDE_DPS_CDS = false;              // mirror of settings.include_dps_cooldowns
 
 async function loadSettingsFromServer() {
   try {
     const data = await api("/api/settings");
     EXCLUDED_SPELL_IDS.clear();
     for (const id of data.excluded_spell_ids || []) EXCLUDED_SPELL_IDS.add(id);
+    INCLUDE_DPS_CDS = !!data.include_dps_cooldowns;
+    const cb = $("include-dps-cds-input");
+    if (cb) cb.checked = INCLUDE_DPS_CDS;
   } catch (e) {
     status(`Couldn't load settings: ${e.message}`, true);
   }
@@ -65,7 +69,10 @@ function saveSettings() {
     try {
       await api("/api/settings", {
         method: "PUT",
-        body: JSON.stringify({ excluded_spell_ids: [...EXCLUDED_SPELL_IDS] }),
+        body: JSON.stringify({
+          excluded_spell_ids: [...EXCLUDED_SPELL_IDS],
+          include_dps_cooldowns: INCLUDE_DPS_CDS,
+        }),
       });
     } catch (e) {
       status(`Settings save failed: ${e.message}`, true);
@@ -89,40 +96,54 @@ function renderSpellFilter() {
     container.innerHTML = `<small class="muted">No tracked spells loaded.</small>`;
     return;
   }
-  // Group by (class, spec)
-  const groups = new Map();
-  for (const s of TRACKED_SPELLS) {
+  // Healer specs are always shown; the class-wide raid section is only
+  // shown when "Include DPS raid CDs" is on in Settings.
+  const spells = TRACKED_SPELLS.filter(
+    (s) => s.group === "healer" || (s.group === "raid" && INCLUDE_DPS_CDS)
+  );
+  // Group by (class, spec) within each group bucket.
+  const buckets = { healer: new Map(), raid: new Map() };
+  for (const s of spells) {
     const key = `${s.wow_class}|${s.spec}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(s);
+    const map = buckets[s.group] || buckets.healer;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(s);
   }
-  const html = [...groups.entries()]
-    .map(([key, spells]) => {
+  const renderRows = (specsList) =>
+    specsList.map((s) => {
+      const checked = EXCLUDED_SPELL_IDS.has(s.spell_id) ? "" : "checked";
+      return `
+        <label class="spell-filter-row">
+          <input type="checkbox" class="spell-filter-cb"
+                 data-spell-id="${s.spell_id}" ${checked}>
+          <span>${s.label}</span>
+          <small class="muted">(${s.category})</small>
+        </label>`;
+    }).join("");
+  const renderBucket = (bucket) =>
+    [...bucket.entries()].map(([key, list]) => {
       const [cls, spec] = key.split("|");
-      const rows = spells.map((s) => {
-        const checked = EXCLUDED_SPELL_IDS.has(s.spell_id) ? "" : "checked";
-        return `
-          <label class="spell-filter-row">
-            <input type="checkbox" class="spell-filter-cb"
-                   data-spell-id="${s.spell_id}" ${checked}>
-            <span>${s.label}</span>
-            <small class="muted">(${s.category})</small>
-          </label>`;
-      }).join("");
+      const label = spec === "(any)" ? cls : `${cls} / ${spec}`;
       return `
         <div class="spell-filter-group class-${cls.replace(/\s/g, "")}">
-          <h6 class="spell-filter-group-head">${cls} / ${spec}</h6>
-          <div class="spell-filter-group-rows">${rows}</div>
+          <h6 class="spell-filter-group-head">${label}</h6>
+          <div class="spell-filter-group-rows">${renderRows(list)}</div>
         </div>`;
     }).join("");
+
+  let html = renderBucket(buckets.healer);
+  if (buckets.raid.size) {
+    html += `<h5 class="spell-filter-section-head">Class-wide raid CDs</h5>`;
+    html += renderBucket(buckets.raid);
+  }
   container.innerHTML = html;
+
   container.querySelectorAll(".spell-filter-cb").forEach((cb) => {
     cb.addEventListener("change", () => {
       const id = parseInt(cb.dataset.spellId, 10);
       if (cb.checked) EXCLUDED_SPELL_IDS.delete(id);
       else EXCLUDED_SPELL_IDS.add(id);
       saveSettings();
-      // If a note is currently displayed, regenerate to reflect the filter.
       if (CURRENT_NOTE) debouncedRegenerateNote();
     });
   });
@@ -987,6 +1008,12 @@ async function boot() {
   $("roster-add-form").addEventListener("submit", (e) => {
     e.preventDefault();
     doManualAdd();
+  });
+  $("include-dps-cds-input").addEventListener("change", (e) => {
+    INCLUDE_DPS_CDS = e.target.checked;
+    saveSettings();
+    renderSpellFilter();
+    if (CURRENT_NOTE) debouncedRegenerateNote();
   });
   $("roster-clear-btn").addEventListener("click", () => {
     if (!confirm("Clear all roster members?")) return;

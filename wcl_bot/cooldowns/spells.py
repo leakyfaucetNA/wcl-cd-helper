@@ -36,11 +36,13 @@ HEALER_COOLDOWNS: dict[tuple[str, str], tuple[CooldownSpell, ...]] = {
         CooldownSpell(64843, "Divine Hymn", "raid"),
         CooldownSpell(200183, "Apotheosis", "raid"),
         CooldownSpell(47788, "Guardian Spirit", "external"),
+        CooldownSpell(32375, "Mass Dispel", "raid"),
     ),
     ("Priest", "Discipline"): (
         CooldownSpell(246287, "Evangelism", "raid"),
         CooldownSpell(421453, "Ultimate Penitence", "raid"),
         CooldownSpell(33206, "Pain Suppression", "external"),
+        CooldownSpell(32375, "Mass Dispel", "raid"),
     ),
     ("Paladin", "Holy"): (
         CooldownSpell(31821, "Aura Mastery", "raid"),
@@ -99,16 +101,72 @@ HEALER_COOLDOWNS: dict[tuple[str, str], tuple[CooldownSpell, ...]] = {
 }
 
 
-def spells_for(wow_class: str, spec: str) -> tuple[CooldownSpell, ...]:
-    """Return tracked cooldowns for the given (class, spec), or () if untracked."""
-    return HEALER_COOLDOWNS.get((wow_class.title(), spec.title()), ())
+# Class-wide raid CDs available to ANY spec of the class. Off by default —
+# only included when the user toggles "Include DPS raid CDs" in Settings.
+# Spec-specific healing CDs stay in HEALER_COOLDOWNS so they're always on.
+CLASS_RAID_COOLDOWNS: dict[str, tuple[CooldownSpell, ...]] = {
+    "Warrior": (
+        CooldownSpell(97462, "Rallying Cry", "raid"),
+    ),
+    "Death Knight": (
+        CooldownSpell(51052, "Anti-Magic Zone", "raid"),
+    ),
+    "Demon Hunter": (
+        CooldownSpell(196718, "Darkness", "raid"),
+    ),
+    "Druid": (
+        CooldownSpell(106898, "Stampeding Roar", "raid"),
+    ),
+    "Hunter": (
+        CooldownSpell(53480, "Roar of Sacrifice", "external"),
+    ),
+    "Mage": (
+        CooldownSpell(80353, "Time Warp", "raid"),
+    ),
+    "Rogue": (
+        CooldownSpell(76577, "Smoke Bomb", "raid"),
+    ),
+    "Shaman": (
+        # Heroism (32182) is the Horde variant; alias so either cast counts.
+        CooldownSpell(
+            2825, "Bloodlust", "raid",
+            aliases=(32182,), display_name="Bloodlust / Heroism",
+        ),
+    ),
+    "Evoker": (
+        CooldownSpell(390386, "Fury of the Aspects", "raid"),
+    ),
+}
+
+
+def spells_for(
+    wow_class: str,
+    spec: str,
+    *,
+    include_class_raid: bool = False,
+) -> tuple[CooldownSpell, ...]:
+    """Return tracked cooldowns for the given (class, spec).
+
+    With `include_class_raid=True`, also folds in CLASS_RAID_COOLDOWNS for
+    that class — used when the "Include DPS raid CDs" toggle is on, so any
+    player of that class (not just healers) gets their raid CDs tracked.
+    """
+    out = HEALER_COOLDOWNS.get((wow_class.title(), spec.title()), ())
+    if include_class_raid:
+        out = out + CLASS_RAID_COOLDOWNS.get(wow_class.title(), ())
+    return out
 
 
 def all_tracked_spell_ids() -> set[int]:
-    """Every spell ID we care about, across all specs (primary + aliases)."""
-    return {
+    """Every spell ID we care about, across all specs (primary + aliases),
+    including class-wide raid CDs."""
+    ids = {
         sid
         for spells in HEALER_COOLDOWNS.values()
         for spell in spells
         for sid in spell.all_ids
     }
+    for spells in CLASS_RAID_COOLDOWNS.values():
+        for spell in spells:
+            ids.update(spell.all_ids)
+    return ids

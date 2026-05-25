@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 
 from wcl_bot.cooldowns import (
+    CLASS_RAID_COOLDOWNS,
     HEALER_COOLDOWNS,
     extract_cooldowns,
     fetch_fight_cooldowns,
@@ -142,19 +143,27 @@ async def put_settings(payload: SettingsPayload) -> SettingsPayload:
 
 @router.get("/tracked_spells", response_model=TrackedSpellsResponse)
 async def tracked_spells() -> TrackedSpellsResponse:
-    """Every cooldown the bot tracks, flat list with class/spec context.
-    Drives the Search panel's spell-filter checkboxes."""
+    """Every cooldown the bot can track, flat list with class/spec context.
+    Drives the Search panel's spell-filter checkboxes. The 'group' field
+    distinguishes always-tracked healer CDs from class-wide raid CDs that
+    only fire when the user's 'Include DPS raid CDs' setting is on."""
     out: list[TrackedSpell] = []
     for (cls, spec), spells in HEALER_COOLDOWNS.items():
         for s in spells:
             out.append(
                 TrackedSpell(
-                    spell_id=s.spell_id,
-                    name=s.name,
-                    label=s.label,
-                    category=s.category,
-                    wow_class=cls,
-                    spec=spec,
+                    spell_id=s.spell_id, name=s.name, label=s.label,
+                    category=s.category, wow_class=cls, spec=spec,
+                    group="healer",
+                )
+            )
+    for cls, spells in CLASS_RAID_COOLDOWNS.items():
+        for s in spells:
+            out.append(
+                TrackedSpell(
+                    spell_id=s.spell_id, name=s.name, label=s.label,
+                    category=s.category, wow_class=cls, spec="(any)",
+                    group="raid",
                 )
             )
     return TrackedSpellsResponse(spells=out)
@@ -424,7 +433,11 @@ async def discover(
     if not matches:
         return DiscoverResponse(server_filter=server_filter_display, matches=[])
 
-    fight_cds = await extract_cooldowns(client, matches)
+    settings = _load_settings_from_disk()
+    fight_cds = await extract_cooldowns(
+        client, matches,
+        include_dps_cooldowns=settings.include_dps_cooldowns,
+    )
     scores = score_logs(
         fight_cds,
         outlier_threshold_ms=int(payload.outlier_threshold_seconds * 1000),
@@ -551,9 +564,11 @@ async def note(request: Request, payload: NoteRequest) -> NoteResponse:
     """Format the selected log as an MRT or NSRT note. Bypasses discovery
     — works on any (report, fight) the user knows about."""
     client = _client(request)
+    settings = _load_settings_from_disk()
     try:
         fc = await fetch_fight_cooldowns(
-            client, payload.report_code, payload.fight_id
+            client, payload.report_code, payload.fight_id,
+            include_dps_cooldowns=settings.include_dps_cooldowns,
         )
     except WCLError as exc:
         raise HTTPException(status_code=502, detail=f"WCL: {exc}") from exc

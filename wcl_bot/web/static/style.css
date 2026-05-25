@@ -320,6 +320,14 @@ table.results-table .outliers-bad  { color: #d06b6b; }
   letter-spacing: 0.04em;
   color: var(--pico-muted-color);
 }
+.spell-filter-section-head {
+  grid-column: 1 / -1;
+  margin: 0.5rem 0 0.25rem;
+  font-size: 0.9em;
+  color: var(--pico-muted-color);
+  border-top: 1px solid var(--pico-card-border-color);
+  padding-top: 0.5rem;
+}
 .spell-filter-row {
   display: flex;
   align-items: center;

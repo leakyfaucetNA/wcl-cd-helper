@@ -131,7 +131,8 @@ class TrackedSpell(BaseModel):
     label: str          # display name (e.g. "Avenging Wrath / Crusader")
     category: str       # "raid" | "external"
     wow_class: str
-    spec: str
+    spec: str           # for class-wide raid CDs this is "(any)"
+    group: str          # "healer" or "raid" — drives UI grouping
 
 
 class TrackedSpellsResponse(BaseModel):
@@ -139,9 +140,9 @@ class TrackedSpellsResponse(BaseModel):
 
 
 class SettingsPayload(BaseModel):
-    """Persistent user settings. Currently just the spell-filter exclusion
-    set; will grow as we add other toggles."""
+    """Persistent user settings."""
     excluded_spell_ids: list[int] = Field(default_factory=list)
+    include_dps_cooldowns: bool = False
 
 
 class GuildRosterMember(BaseModel):

@@ -7,6 +7,7 @@ from wcl_bot.cooldowns.extract import (
 )
 from wcl_bot.cooldowns.scoring import LogScore, score_logs
 from wcl_bot.cooldowns.spells import (
+    CLASS_RAID_COOLDOWNS,
     HEALER_COOLDOWNS,
     CooldownSpell,
     all_tracked_spell_ids,
@@ -16,6 +17,7 @@ from wcl_bot.cooldowns.spells import (
 __all__ = [
     "CooldownSpell",
     "HEALER_COOLDOWNS",
+    "CLASS_RAID_COOLDOWNS",
     "spells_for",
     "all_tracked_spell_ids",
     "CooldownEvent",
