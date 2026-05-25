@@ -69,6 +69,13 @@ class NoteRequest(BaseModel):
     # Optional WCL-name → display-name overrides applied at format time.
     # Used by the UI to remap discovered players to the user's own guild names.
     name_overrides: dict[str, str] = Field(default_factory=dict)
+    # Optional WCL-name → target-class overrides (e.g. {"Yolene": "Paladin"}).
+    # For each event by that healer, the formatter substitutes the spell
+    # with an equivalent from the target class (matched by `purpose`). Used
+    # to "rewrite a Resto Shaman's cooldowns as a Holy Paladin's" so the
+    # generated note slots into your real comp. Lines with no equivalent
+    # in the target class are dropped.
+    class_overrides: dict[str, str] = Field(default_factory=dict)
     # Spell IDs to omit from the generated note + returned timeline. Frontend
     # populates this from the persistent settings (excluded spells).
     excluded_spell_ids: list[int] = Field(default_factory=list)

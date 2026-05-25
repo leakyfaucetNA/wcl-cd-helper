@@ -773,18 +773,39 @@ async def note(request: Request, payload: NoteRequest) -> NoteResponse:
         )
 
     style = NoteStyle(payload.style)
-    note_text = format_note(fc, style, name_overrides=payload.name_overrides)
-    timeline = [
-        TimelineEntry(
-            time_ms=ev.time_into_fight_ms,
-            healer_name=payload.name_overrides.get(ev.healer.name, ev.healer.name),
-            healer_class=ev.healer.wow_class,
-            healer_spec=ev.healer.spec,
-            spell_label=ev.spell.label,
-            spell_id=ev.cast_spell_id,
+    note_text = format_note(
+        fc, style,
+        name_overrides=payload.name_overrides,
+        class_overrides=payload.class_overrides,
+    )
+
+    # Build the timeline with the SAME substitution rules so the preview /
+    # any UI rendering of the timeline matches the textarea exactly.
+    from wcl_bot.cooldowns import substitute_for
+    timeline: list[TimelineEntry] = []
+    for ev in fc.events:
+        target_class = payload.class_overrides.get(ev.healer.name)
+        if target_class:
+            sub = substitute_for(ev.spell, target_class)
+            if sub is None:
+                continue
+            spell_id = sub.spell_id
+            spell_label = sub.label
+            display_class = target_class
+        else:
+            spell_id = ev.cast_spell_id
+            spell_label = ev.spell.label
+            display_class = ev.healer.wow_class
+        timeline.append(
+            TimelineEntry(
+                time_ms=ev.time_into_fight_ms,
+                healer_name=payload.name_overrides.get(ev.healer.name, ev.healer.name),
+                healer_class=display_class,
+                healer_spec=ev.healer.spec,
+                spell_label=spell_label,
+                spell_id=spell_id,
+            )
         )
-        for ev in fc.events
-    ]
     return NoteResponse(
         report_code=fc.kill.ranking.report_code,
         fight_id=fc.kill.ranking.fight_id,

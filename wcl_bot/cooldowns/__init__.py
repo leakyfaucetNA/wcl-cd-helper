@@ -12,6 +12,7 @@ from wcl_bot.cooldowns.spells import (
     CooldownSpell,
     all_tracked_spell_ids,
     spells_for,
+    substitute_for,
 )
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "HEALER_COOLDOWNS",
     "CLASS_RAID_COOLDOWNS",
     "spells_for",
+    "substitute_for",
     "all_tracked_spell_ids",
     "CooldownEvent",
     "FightCooldowns",

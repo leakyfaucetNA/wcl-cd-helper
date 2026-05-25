@@ -43,6 +43,9 @@ async function loadHealerSpecs() {
 // Per-log name overrides, keyed by WCL player name → display name.
 // Reset whenever the user picks a different log.
 const LOG_OVERRIDES = new Map();
+// Per-log class overrides (Manual mode only). WCL player name → target class.
+// Used to rewrite the player's spells as the target class's equivalents.
+const LOG_CLASS_OVERRIDES = new Map();
 
 // Persistent settings (server-side). Two-list model:
 //   EXCLUDED_SPELL_IDS  — default-included spells (healer CDs) the user disabled
@@ -480,12 +483,18 @@ function renderNoteRemap(healers) {
   container.innerHTML = healers.map((h, i) => {
     const opts = rosterOptionsFor(h);
     const currentOverride = LOG_OVERRIDES.get(h.name);
+    const currentClass = LOG_CLASS_OVERRIDES.get(h.name);
     const color = CLASS_COLORS_HEX[h.wow_class] || "";
     const mkOpt = (m) => {
       const sel = currentOverride === m.name ? "selected" : "";
       return `<option value="roster:${m.name}" style="color: ${color}" ${sel}>${m.name}</option>`;
     };
     const keepSel = currentOverride === undefined || currentOverride === h.name ? "selected" : "";
+    // Class dropdown options (any tracked healer class).
+    const classOpts = CLASSES_WITH_HEALERS.map(
+      (c) => `<option value="${c}" style="color: ${CLASS_COLORS_HEX[c] || ''}" ${currentClass === c ? "selected" : ""}>${c}</option>`
+    ).join("");
+    const classOverrideChecked = currentClass ? "checked" : "";
     return `
       <div class="remap-cell class-${h.wow_class}" data-idx="${i}">
         <div class="remap-cell-head">
@@ -498,20 +507,32 @@ function renderNoteRemap(healers) {
           ${opts.length ? `<optgroup label="Roster">${opts.map(mkOpt).join("")}</optgroup>` : ""}
           <option value="manual">Manual...</option>
         </select>
-        <input type="text" class="remap-manual-input" data-wcl-name="${h.name}" hidden
-               placeholder="Custom name" value="${currentOverride && !ROSTER.some((m) => m.name === currentOverride) ? currentOverride : ""}">
+        <div class="remap-manual-block" data-wcl-name="${h.name}" hidden>
+          <input type="text" class="remap-manual-input" data-wcl-name="${h.name}"
+                 placeholder="Custom name" value="${currentOverride && !ROSTER.some((m) => m.name === currentOverride) ? currentOverride : ""}">
+          <label class="remap-class-toggle">
+            <input type="checkbox" class="remap-class-cb" data-wcl-name="${h.name}" ${classOverrideChecked}>
+            Class Override
+          </label>
+          <select class="remap-class-select" data-wcl-name="${h.name}" ${currentClass ? "" : "hidden"}>
+            ${classOpts}
+          </select>
+        </div>
       </div>
     `;
   }).join("");
 
   container.querySelectorAll(".remap-select").forEach((sel) => {
-    // If the current override doesn't match any select option, switch to manual mode.
+    // If the current override doesn't match any select option, or if a class
+    // override is set for this healer, switch to manual mode so the panel shows.
     const wclName = sel.dataset.wclName;
     const cur = LOG_OVERRIDES.get(wclName);
-    if (cur !== undefined && cur !== wclName && !ROSTER.some((m) => m.name === cur)) {
+    const hasClassOverride = LOG_CLASS_OVERRIDES.has(wclName);
+    const customName = cur !== undefined && cur !== wclName && !ROSTER.some((m) => m.name === cur);
+    if (customName || hasClassOverride) {
       sel.value = "manual";
-      const inp = sel.parentElement.querySelector(".remap-manual-input");
-      inp.hidden = false;
+      const block = sel.closest(".remap-cell").querySelector(".remap-manual-block");
+      if (block) block.hidden = false;
     }
     sel.addEventListener("change", () => onRemapChange(sel));
   });
@@ -523,24 +544,58 @@ function renderNoteRemap(healers) {
       debouncedRegenerateNote();
     });
   });
+  container.querySelectorAll(".remap-class-cb").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const wclName = cb.dataset.wclName;
+      const classSel = cb.closest(".remap-manual-block").querySelector(".remap-class-select");
+      if (cb.checked) {
+        classSel.hidden = false;
+        LOG_CLASS_OVERRIDES.set(wclName, classSel.value);
+      } else {
+        classSel.hidden = true;
+        LOG_CLASS_OVERRIDES.delete(wclName);
+      }
+      debouncedRegenerateNote();
+    });
+  });
+  container.querySelectorAll(".remap-class-select").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const wclName = sel.dataset.wclName;
+      if (LOG_CLASS_OVERRIDES.has(wclName)) {
+        LOG_CLASS_OVERRIDES.set(wclName, sel.value);
+        debouncedRegenerateNote();
+      }
+    });
+  });
 }
 
 function onRemapChange(sel) {
   const wclName = sel.dataset.wclName;
-  const manualInput = sel.parentElement.querySelector(".remap-manual-input");
+  const block = sel.closest(".remap-cell").querySelector(".remap-manual-block");
+  const manualInput = block.querySelector(".remap-manual-input");
   if (sel.value === "keep") {
     LOG_OVERRIDES.delete(wclName);
-    manualInput.hidden = true;
+    LOG_CLASS_OVERRIDES.delete(wclName);
+    block.hidden = true;
     manualInput.value = "";
+    const cb = block.querySelector(".remap-class-cb");
+    const classSel = block.querySelector(".remap-class-select");
+    if (cb) cb.checked = false;
+    if (classSel) classSel.hidden = true;
   } else if (sel.value === "manual") {
-    manualInput.hidden = false;
+    block.hidden = false;
     manualInput.focus();
-    // Don't update overrides until the user types something.
+    // Don't update overrides until the user types something / toggles class.
   } else if (sel.value.startsWith("roster:")) {
     const rosterName = sel.value.slice("roster:".length);
     LOG_OVERRIDES.set(wclName, rosterName);
-    manualInput.hidden = true;
+    LOG_CLASS_OVERRIDES.delete(wclName);
+    block.hidden = true;
     manualInput.value = "";
+    const cb = block.querySelector(".remap-class-cb");
+    const classSel = block.querySelector(".remap-class-select");
+    if (cb) cb.checked = false;
+    if (classSel) classSel.hidden = true;
   }
   debouncedRegenerateNote();
 }
@@ -977,6 +1032,9 @@ let CURRENT_HEALERS = null; // [{name, wow_class, spec, rank_percent}] from log_
 
 async function loadNote(reportCode, fightId) {
   CURRENT_NOTE = { report_code: reportCode, fight_id: fightId };
+  // New log → fresh class overrides (name overrides are reset by
+  // autoAssignFromRoster below).
+  LOG_CLASS_OVERRIDES.clear();
   try {
     const detail = await api("/api/log_detail", {
       method: "POST",
@@ -1005,6 +1063,7 @@ async function fetchAndRenderNote(style) {
   if (!CURRENT_NOTE) return;
   $("note-output").value = "Loading…";
   const overrides = Object.fromEntries(LOG_OVERRIDES);
+  const classOverrides = Object.fromEntries(LOG_CLASS_OVERRIDES);
   const excluded = effectiveExcludedSpellIds();
   try {
     const data = await api("/api/note", {
@@ -1012,6 +1071,7 @@ async function fetchAndRenderNote(style) {
       body: JSON.stringify({
         ...CURRENT_NOTE, style,
         name_overrides: overrides,
+        class_overrides: classOverrides,
         excluded_spell_ids: excluded,
       }),
     });
