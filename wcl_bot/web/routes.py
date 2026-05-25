@@ -550,9 +550,15 @@ async def _fetch_per_healer_metrics(
     Tolerant of missing fields / failed sub-queries — returns whatever we got.
 
     Returns {player_name: {"parse_percent": float?, "hps": float?, "active_time_pct": float?}}.
+
+    HPS is computed from the healing table's `total` divided by fight duration —
+    `report.rankings.amount` is a normalized rank-score, not raw HPS. Parse %
+    prefers `bracketPercent` (ilvl-filtered, matches WCL's "Parse" column) over
+    `rankPercent` (unfiltered).
     """
     out: dict[str, dict] = {}
-    # Rankings → parse % and hps (the "amount" field). One cached call.
+
+    # 1. Rankings → parse % (bracketPercent preferred). One cached call.
     try:
         rank_data = await client.execute(
             queries.GET_REPORT_FIGHT_RANKINGS,
@@ -563,58 +569,78 @@ async def _fetch_per_healer_metrics(
             rank_data.get("reportData", {}).get("report", {}).get("rankings")
         ).items():
             out.setdefault(name, {})["parse_percent"] = _pick_parse_percent(metrics)
-            amt = metrics.get("amount")
-            if amt is not None:
-                out[name]["hps"] = float(amt)
     except (WCLError, KeyError) as exc:
         log.warning("rankings fetch failed for %s#%d: %s", report_code, fight_id, exc)
 
-    # Healing table → activeTime. Another cached call.
+    # 2. Healing table → activeTime AND total healing (for HPS). One cached call.
     try:
         tbl_data = await client.execute(
             queries.GET_HEALING_TABLE,
             {"code": report_code, "fightID": fight_id},
             cache_ttl_seconds=CACHE_TTL_STATIC,
         )
-        for name, active_ms in _extract_active_time(
+        duration_s = fight_duration_ms / 1000.0 if fight_duration_ms > 0 else 0.0
+        for name, fields in _extract_healing_table_data(
             tbl_data.get("reportData", {}).get("report", {}).get("table")
         ).items():
-            if fight_duration_ms > 0:
+            slot = out.setdefault(name, {})
+            active_ms = fields.get("active_time_ms")
+            if active_ms is not None and fight_duration_ms > 0:
                 pct = max(0.0, min(100.0, active_ms / fight_duration_ms * 100.0))
-                out.setdefault(name, {})["active_time_pct"] = pct
+                slot["active_time_pct"] = pct
+            total_heal = fields.get("total_healing")
+            if total_heal is not None and duration_s > 0:
+                slot["hps"] = total_heal / duration_s
     except (WCLError, KeyError) as exc:
         log.warning("healing table fetch failed for %s#%d: %s", report_code, fight_id, exc)
 
     return out
 
 
-def _extract_active_time(blob) -> dict[str, float]:
-    """Walk the healing-table JSON blob and pull {player_name: activeTime_ms}.
+def _extract_healing_table_data(blob) -> dict[str, dict[str, float]]:
+    """Walk the healing-table JSON blob and pull per-player active time and
+    total healing. Returns {name: {"active_time_ms", "total_healing"}}.
 
-    Common shape: data.entries[] each with name, activeTime (ms). Tolerant
-    of variants since the table query returns a scalar JSON blob."""
+    Common shape: data.entries[] each with name, activeTime (ms), total
+    (raw healing). Tolerant of variants since `table` returns a JSON scalar.
+    """
     if not isinstance(blob, dict):
         return {}
     container = blob.get("data") if isinstance(blob.get("data"), dict) else blob
     entries = container.get("entries") or []
     if not isinstance(entries, list):
         return {}
-    out: dict[str, float] = {}
+    out: dict[str, dict[str, float]] = {}
     for e in entries:
         if not isinstance(e, dict):
             continue
         name = e.get("name")
-        # activeTime is ms in WCL's table responses. Some shapes also have
-        # activeTimeReduced; we use the un-reduced figure.
+        if not name:
+            continue
+        row: dict[str, float] = {}
         active = e.get("activeTime")
-        if name and isinstance(active, (int, float)):
-            out[name] = float(active)
+        if isinstance(active, (int, float)):
+            row["active_time_ms"] = float(active)
+        # Prefer overheal-removed total if present; otherwise raw `total`.
+        total = e.get("total")
+        if isinstance(total, (int, float)):
+            row["total_healing"] = float(total)
+        if row:
+            out[name] = row
     return out
 
 
-# Field-name candidates for "Parse %" (this-fight percentile), in priority order.
-# Adjust as we confirm which one WCL actually uses.
-_PARSE_PCT_FIELDS = ("rankPercent", "todayPercent", "parsePercent", "percentile")
+# Field-name candidates for "Parse %" (this-fight ilvl-bracketed percentile),
+# in priority order. `bracketPercent` matches WCL's headline "Parse" column;
+# `rankPercent` (no bracket) is the older alias. The other names are
+# defensive fallbacks for shape drift.
+_PARSE_PCT_FIELDS = (
+    "bracketPercent",
+    "rankPercent",
+    "todayPercent",
+    "parsePercent",
+    "percentile",
+)
 
 
 def _pick_parse_percent(metrics: dict[str, float]) -> float | None:
