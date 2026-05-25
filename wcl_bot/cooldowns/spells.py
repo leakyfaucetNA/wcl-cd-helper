@@ -125,9 +125,6 @@ CLASS_RAID_COOLDOWNS: dict[str, tuple[CooldownSpell, ...]] = {
     "Hunter": (
         CooldownSpell(53480, "Roar of Sacrifice", "external", purpose=PURPOSE_SINGLE_EXT_DR),
     ),
-    "Mage": (
-        CooldownSpell(80353, "Time Warp", "raid", purpose=PURPOSE_UTILITY),
-    ),
     "Rogue": (
         CooldownSpell(76577, "Smoke Bomb", "raid", purpose=PURPOSE_RAID_DR),
     ),
