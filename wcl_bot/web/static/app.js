@@ -20,6 +20,12 @@ async function api(path, init) {
   return resp.json();
 }
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 function status(msg, isError = false, timeoutMs = 4000) {
   const el = $("status");
   el.textContent = msg;
@@ -857,6 +863,9 @@ async function doDiscover(ev) {
     include_extra_healers: $("include-extra-input").checked,
     bypass_cache: $("bypass-cache-input").checked,
   };
+  // Capture zone at submit time so the WCL-link URL stays in sync with the
+  // results — even if the user changes the dropdown after clicking.
+  const zoneId = parseInt($("zone-select").value, 10);
 
   const btn = $("discover-btn");
   btn.setAttribute("aria-busy", "true");
@@ -867,7 +876,11 @@ async function doDiscover(ev) {
       body: JSON.stringify(payload),
     });
     const targetN = healers.reduce((n, h) => n + h.count, 0);
-    renderResults(data, targetN);
+    renderResults(data, targetN, {
+      zoneId,
+      encounterId: payload.encounter_id,
+      difficulty: payload.difficulty,
+    });
   } catch (e) {
     status(`Discover failed: ${e.message}`, true);
   } finally {
@@ -879,10 +892,20 @@ async function doDiscover(ev) {
   }
 }
 
-function renderResults(data, targetN) {
+function renderResults(data, targetN, ctx = {}) {
   const panel = $("results-panel");
   const content = $("results-content");
-  $("results-meta").textContent = `${data.matches.length} match${data.matches.length === 1 ? "" : "es"} · filter: ${data.server_filter}`;
+  const meta = $("results-meta");
+  const count = `${data.matches.length} match${data.matches.length === 1 ? "" : "es"}`;
+  const wclUrl = ctx.zoneId && ctx.encounterId && ctx.difficulty
+    ? `https://www.warcraftlogs.com/zone/rankings/${ctx.zoneId}#boss=${ctx.encounterId}&difficulty=${ctx.difficulty}&class=Healer&filter=${encodeURIComponent(data.server_filter)}`
+    : null;
+  // Escape for the visible filter string — the link wrapping makes raw
+  // HTML interpolation unsafe even though server_filter is server-generated.
+  const filterTxt = escapeHtml(data.server_filter);
+  meta.innerHTML = wclUrl
+    ? `${count} &middot; filter: <a href="${wclUrl}" target="_blank" rel="noopener">${filterTxt}</a>`
+    : `${count} &middot; filter: ${filterTxt}`;
 
   if (data.matches.length === 0) {
     content.innerHTML = `<p class="muted">No matching kills. Try a different boss, region, or relax the comp.</p>`;
