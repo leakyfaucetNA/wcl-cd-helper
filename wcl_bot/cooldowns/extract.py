@@ -44,8 +44,6 @@ async def fetch_fight_cooldowns(
     client: WCLClient,
     report_code: str,
     fight_id: int,
-    *,
-    include_dps_cooldowns: bool = False,
 ) -> FightCooldowns:
     """Extract cooldowns from a specific (report, fight), bypassing the
     leaderboard discovery + comp filter pipeline.
@@ -81,10 +79,7 @@ async def fetch_fight_cooldowns(
         healer_count=len(healers),
     )
     kill = MatchedKill(ranking=synthetic_ranking, healers=healers)
-    results = await extract_cooldowns(
-        client, [kill], concurrency=1,
-        include_dps_cooldowns=include_dps_cooldowns,
-    )
+    results = await extract_cooldowns(client, [kill], concurrency=1)
     return results[0]
 
 
@@ -93,7 +88,6 @@ async def extract_cooldowns(
     matched_kills: list[MatchedKill],
     *,
     concurrency: int = 5,
-    include_dps_cooldowns: bool = False,
 ) -> list[FightCooldowns]:
     """For each matched kill, fetch its cast events and filter to tracked CDs.
 
@@ -105,10 +99,7 @@ async def extract_cooldowns(
     async def one(kill: MatchedKill) -> FightCooldowns | None:
         async with sem:
             try:
-                return await _extract_one(
-                    client, kill,
-                    include_dps_cooldowns=include_dps_cooldowns,
-                )
+                return await _extract_one(client, kill)
             except WCLError as exc:
                 log.warning(
                     "extract failed for %s#%d: %s",
@@ -122,12 +113,7 @@ async def extract_cooldowns(
     return [r for r in results if r is not None]
 
 
-async def _extract_one(
-    client: WCLClient,
-    kill: MatchedKill,
-    *,
-    include_dps_cooldowns: bool = False,
-) -> FightCooldowns:
+async def _extract_one(client: WCLClient, kill: MatchedKill) -> FightCooldowns:
     # 1. Fight time window — needed for absolute → relative conversion.
     info = await client.execute(
         queries.GET_FIGHT_TIMES,
@@ -142,36 +128,33 @@ async def _extract_one(
     fight_start = int(fights[0]["startTime"])
     fight_end = int(fights[0]["endTime"])
 
-    # 2. Build the player roster for this fight. Default: just the healers
-    # already on MatchedKill. With include_dps_cooldowns, re-parse the full
-    # playerDetails to pick up tanks + dps as well — they're tracked for
-    # class-wide raid CDs (Rallying Cry, AMZ, Darkness, lust, etc.).
+    # 2. Build the full player roster (healers + tanks + dps) so we can
+    # match class-wide raid CDs (Rallying Cry, AMZ, Darkness, lust, etc.)
+    # on any class, not just healers. The note-formatting layer decides
+    # which spells actually appear via the user's effective filter.
     players: list[HealerEntry] = list(kill.healers)
-    if include_dps_cooldowns:
-        try:
-            pd_data = await client.execute(
-                queries.GET_REPORT_PLAYER_DETAILS,
-                {"code": kill.ranking.report_code, "fightIDs": [kill.ranking.fight_id]},
-                cache_ttl_seconds=CACHE_TTL_STATIC,
-            )
-            all_players = parse_all_players(pd_data)
-            # Replace by union — keeps any healer data we already had +
-            # adds tanks/dps. Dedupe by source_id (healers may overlap).
-            seen = {h.source_id for h in players}
-            for p in all_players:
-                if p.source_id not in seen:
-                    players.append(p)
-                    seen.add(p.source_id)
-        except WCLError as exc:
-            log.warning(
-                "Couldn't fetch full player roster for DPS CDs in %s#%d: %s — "
-                "falling back to healers only",
-                kill.ranking.report_code, kill.ranking.fight_id, exc,
-            )
+    try:
+        pd_data = await client.execute(
+            queries.GET_REPORT_PLAYER_DETAILS,
+            {"code": kill.ranking.report_code, "fightIDs": [kill.ranking.fight_id]},
+            cache_ttl_seconds=CACHE_TTL_STATIC,
+        )
+        all_players = parse_all_players(pd_data)
+        seen = {h.source_id for h in players}
+        for p in all_players:
+            if p.source_id not in seen:
+                players.append(p)
+                seen.add(p.source_id)
+    except WCLError as exc:
+        log.warning(
+            "Couldn't fetch full player roster in %s#%d: %s — "
+            "falling back to healers only",
+            kill.ranking.report_code, kill.ranking.fight_id, exc,
+        )
 
     # 3. Per-player lookup of tracked spell IDs → CooldownSpell.
-    # Healers get their HEALER_COOLDOWNS; everyone of a tracked class also
-    # picks up CLASS_RAID_COOLDOWNS when the toggle is on.
+    # Healers get HEALER_COOLDOWNS for their (class, spec). Every player
+    # additionally picks up CLASS_RAID_COOLDOWNS for their class if any.
     healer_ids = {h.source_id for h in kill.healers}
     players_by_id: dict[int, HealerEntry] = {p.source_id: p for p in players}
     cd_lookup: dict[int, dict[int, CooldownSpell]] = {}
@@ -181,10 +164,9 @@ async def _extract_one(
             for spell in spells_for(p.wow_class, p.spec):
                 for sid in spell.all_ids:
                     spell_map[sid] = spell
-        if include_dps_cooldowns:
-            for spell in CLASS_RAID_COOLDOWNS.get(p.wow_class, ()):
-                for sid in spell.all_ids:
-                    spell_map[sid] = spell
+        for spell in CLASS_RAID_COOLDOWNS.get(p.wow_class, ()):
+            for sid in spell.all_ids:
+                spell_map[sid] = spell
         if spell_map:
             cd_lookup[p.source_id] = spell_map
 

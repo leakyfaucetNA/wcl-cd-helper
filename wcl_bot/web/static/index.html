@@ -16,6 +16,7 @@
 
     <nav class="tabbar">
       <button class="tab-btn active" data-tab="search" type="button">Search</button>
+      <button class="tab-btn" data-tab="direct" type="button">Direct Log</button>
       <button class="tab-btn" data-tab="settings" type="button">Settings</button>
     </nav>
 
@@ -65,15 +66,6 @@
       </article>
 
       <article>
-        <header><strong>Tracking</strong></header>
-        <label style="display: block;">
-          <input type="checkbox" id="include-dps-cds-input">
-          Include DPS-class raid cooldowns
-          <small class="muted">(Rallying Cry, AMZ, Darkness, Lust, etc. — off by default; tick spells you want in "Tracked spells" on the Search panel)</small>
-        </label>
-      </article>
-
-      <article>
         <header>
           <strong>My roster</strong>
           <span id="roster-meta" class="muted"></span>
@@ -100,6 +92,24 @@
         <div style="margin-top:0.75rem">
           <button id="roster-clear-btn" type="button" class="secondary outline">Clear roster</button>
         </div>
+      </article>
+    </section>
+
+    <!-- ============= DIRECT LOG TAB ============= -->
+    <section class="tab-panel" data-tab-panel="direct" hidden>
+      <article>
+        <header><strong>Direct log lookup</strong> <small class="muted">— skip the search and pull cooldowns straight from a known fight</small></header>
+        <form id="direct-form">
+          <label>
+            WCL log URL
+            <input type="text" id="direct-input"
+                   placeholder="https://www.warcraftlogs.com/reports/abc123XYZ#fight=5"
+                   required>
+            <small class="muted">URL must include <code>#fight=N</code> so we know which pull to extract.</small>
+          </label>
+        </form>
+        <button id="direct-btn" type="button">Generate note</button>
+        <small id="direct-status" class="muted" style="display:block;margin-top:0.5rem"></small>
       </article>
     </section>
 
@@ -208,7 +218,9 @@
       <div id="results-content"></div>
     </article>
 
-    <!-- ============= STEP 3: NOTE ============= -->
+    </section> <!-- /search tab panel -->
+
+    <!-- ============= NOTE (shared by Search results + Direct Log) ============= -->
     <article id="note-panel" hidden>
       <header>
         <strong>3. Note</strong>
@@ -223,7 +235,7 @@
           </select>
         </label>
         <button id="copy-btn" type="button">Copy note</button>
-        <button id="back-btn" type="button" class="secondary">Back to results</button>
+        <button id="back-btn" type="button" class="secondary">Close note</button>
       </div>
       <div id="note-remap-wrap">
         <h5 class="remap-heading">Rename healers in this note</h5>
@@ -241,8 +253,6 @@
         <div id="note-preview" class="preview-frame"></div>
       </div>
     </article>
-
-    </section> <!-- /search tab panel -->
 
     <div id="status" class="status" hidden></div>
   </main>

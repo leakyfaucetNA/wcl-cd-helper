@@ -128,11 +128,12 @@ class HealerSpecsResponse(BaseModel):
 class TrackedSpell(BaseModel):
     spell_id: int
     name: str
-    label: str          # display name (e.g. "Avenging Wrath / Crusader")
-    category: str       # "raid" | "external"
+    label: str               # display name (e.g. "Avenging Wrath / Crusader")
+    category: str            # "raid" | "external"
     wow_class: str
-    spec: str           # for class-wide raid CDs this is "(any)"
-    group: str          # "healer" or "raid" — drives UI grouping
+    spec: str                # for class-wide raid CDs this is "(any)"
+    group: str               # "healer" or "raid" — drives UI grouping
+    default_excluded: bool   # True for class-wide raid CDs (opt-in)
 
 
 class TrackedSpellsResponse(BaseModel):
@@ -140,9 +141,16 @@ class TrackedSpellsResponse(BaseModel):
 
 
 class SettingsPayload(BaseModel):
-    """Persistent user settings."""
+    """Persistent user settings.
+
+    Two-list filter model:
+      - `excluded_spell_ids` covers spells that default to INCLUDED (healer
+        CDs); membership means user has disabled it.
+      - `enabled_spell_ids` covers spells that default to EXCLUDED (DPS-class
+        raid CDs); membership means user has opted them in.
+    """
     excluded_spell_ids: list[int] = Field(default_factory=list)
-    include_dps_cooldowns: bool = False
+    enabled_spell_ids: list[int] = Field(default_factory=list)
 
 
 class GuildRosterMember(BaseModel):

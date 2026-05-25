@@ -44,19 +44,20 @@ async function loadHealerSpecs() {
 // Reset whenever the user picks a different log.
 const LOG_OVERRIDES = new Map();
 
-// Persistent settings (server-side).
-let TRACKED_SPELLS = [];                  // [{spell_id, name, label, category, wow_class, spec, group}]
-const EXCLUDED_SPELL_IDS = new Set();     // mirror of settings.excluded_spell_ids
-let INCLUDE_DPS_CDS = false;              // mirror of settings.include_dps_cooldowns
+// Persistent settings (server-side). Two-list model:
+//   EXCLUDED_SPELL_IDS  — default-included spells (healer CDs) the user disabled
+//   ENABLED_SPELL_IDS   — default-excluded spells (DPS raid CDs) the user opted into
+let TRACKED_SPELLS = [];                  // [{spell_id, ..., group, default_excluded}]
+const EXCLUDED_SPELL_IDS = new Set();
+const ENABLED_SPELL_IDS = new Set();
 
 async function loadSettingsFromServer() {
   try {
     const data = await api("/api/settings");
     EXCLUDED_SPELL_IDS.clear();
+    ENABLED_SPELL_IDS.clear();
     for (const id of data.excluded_spell_ids || []) EXCLUDED_SPELL_IDS.add(id);
-    INCLUDE_DPS_CDS = !!data.include_dps_cooldowns;
-    const cb = $("include-dps-cds-input");
-    if (cb) cb.checked = INCLUDE_DPS_CDS;
+    for (const id of data.enabled_spell_ids || []) ENABLED_SPELL_IDS.add(id);
   } catch (e) {
     status(`Couldn't load settings: ${e.message}`, true);
   }
@@ -71,13 +72,37 @@ function saveSettings() {
         method: "PUT",
         body: JSON.stringify({
           excluded_spell_ids: [...EXCLUDED_SPELL_IDS],
-          include_dps_cooldowns: INCLUDE_DPS_CDS,
+          enabled_spell_ids: [...ENABLED_SPELL_IDS],
         }),
       });
     } catch (e) {
       status(`Settings save failed: ${e.message}`, true);
     }
   }, 400);
+}
+
+// Spell is currently INCLUDED in notes if:
+//   - default-included (healer) AND not user-excluded, OR
+//   - default-excluded (raid)   AND user-enabled.
+function spellIncluded(s) {
+  if (s.default_excluded) return ENABLED_SPELL_IDS.has(s.spell_id);
+  return !EXCLUDED_SPELL_IDS.has(s.spell_id);
+}
+
+function setSpellIncluded(s, on) {
+  if (s.default_excluded) {
+    if (on) ENABLED_SPELL_IDS.add(s.spell_id);
+    else ENABLED_SPELL_IDS.delete(s.spell_id);
+  } else {
+    if (on) EXCLUDED_SPELL_IDS.delete(s.spell_id);
+    else EXCLUDED_SPELL_IDS.add(s.spell_id);
+  }
+}
+
+// Concrete spell-IDs to omit from a note, computed from TRACKED_SPELLS +
+// user state. Sent to /api/note on every fetch.
+function effectiveExcludedSpellIds() {
+  return TRACKED_SPELLS.filter((s) => !spellIncluded(s)).map((s) => s.spell_id);
 }
 
 async function loadTrackedSpells() {
@@ -102,12 +127,9 @@ function renderSpellFilter() {
     container.innerHTML = `<small class="muted">No tracked spells loaded.</small>`;
     return;
   }
-  // Spells visible right now (healer always; raid only if toggle on).
-  const visible = TRACKED_SPELLS.filter(
-    (s) => s.group === "healer" || (s.group === "raid" && INCLUDE_DPS_CDS)
-  );
-  // Classes that have any visible spell, in alphabetical order.
-  const classes = [...new Set(visible.map((s) => s.wow_class))].sort();
+  // Every class with any tracked spell — healers always present; DPS-only
+  // classes show up too so the user can opt their raid CDs into the note.
+  const classes = [...new Set(TRACKED_SPELLS.map((s) => s.wow_class))].sort();
   if (classes.length === 0) {
     tabsEl.innerHTML = "";
     container.innerHTML = `<small class="muted">Nothing tracked right now.</small>`;
@@ -129,12 +151,12 @@ function renderSpellFilter() {
     });
   });
 
-  renderSpellFilterContent(_activeSpellClass, visible);
+  renderSpellFilterContent(_activeSpellClass);
 }
 
-function renderSpellFilterContent(wowClass, visibleSpells) {
+function renderSpellFilterContent(wowClass) {
   const container = $("spell-filter-list");
-  const spells = visibleSpells.filter((s) => s.wow_class === wowClass);
+  const spells = TRACKED_SPELLS.filter((s) => s.wow_class === wowClass);
   // Group by spec within this class. Healer entries have real specs;
   // class-wide raid entries use spec === "(any)".
   const groups = new Map();
@@ -144,7 +166,7 @@ function renderSpellFilterContent(wowClass, visibleSpells) {
   }
   const renderRows = (list) =>
     list.map((s) => {
-      const checked = EXCLUDED_SPELL_IDS.has(s.spell_id) ? "" : "checked";
+      const checked = spellIncluded(s) ? "checked" : "";
       return `
         <label class="spell-filter-row">
           <input type="checkbox" class="spell-filter-cb"
@@ -165,8 +187,8 @@ function renderSpellFilterContent(wowClass, visibleSpells) {
   container.querySelectorAll(".spell-filter-cb").forEach((cb) => {
     cb.addEventListener("change", () => {
       const id = parseInt(cb.dataset.spellId, 10);
-      if (cb.checked) EXCLUDED_SPELL_IDS.delete(id);
-      else EXCLUDED_SPELL_IDS.add(id);
+      const spell = TRACKED_SPELLS.find((s) => s.spell_id === id);
+      if (spell) setSpellIncluded(spell, cb.checked);
       saveSettings();
       if (CURRENT_NOTE) debouncedRegenerateNote();
     });
@@ -578,6 +600,46 @@ async function doGuildLookup() {
   }
 }
 
+// Same regex pair as the backend's _extract_report_code / _extract_fight_id.
+function parseLogUrl(input) {
+  const code =
+    input.match(/\/reports\/([A-Za-z0-9]+)/)?.[1] ||
+    input.match(/^([A-Za-z0-9]{8,32})$/)?.[1];
+  const fight = parseInt(input.match(/[#?&]fight=(\d+)/)?.[1] || "", 10);
+  return { code, fight: Number.isNaN(fight) ? null : fight };
+}
+
+async function doDirectLog() {
+  const raw = $("direct-input").value.trim();
+  if (!raw) {
+    status("Paste a WCL log URL first.", true);
+    return;
+  }
+  const { code, fight } = parseLogUrl(raw);
+  if (!code) {
+    $("direct-status").textContent = "Couldn't find a WCL report code in that URL.";
+    return;
+  }
+  if (!fight) {
+    $("direct-status").textContent =
+      "URL is missing #fight=N — direct lookup needs a specific fight.";
+    return;
+  }
+  const btn = $("direct-btn");
+  btn.setAttribute("aria-busy", "true");
+  btn.disabled = true;
+  $("direct-status").textContent = `Loading ${code}#fight=${fight}…`;
+  try {
+    await loadNote(code, fight);
+    $("direct-status").textContent = `Loaded ${code}#fight=${fight}.`;
+  } catch (e) {
+    $("direct-status").textContent = `Failed: ${e.message}`;
+  } finally {
+    btn.removeAttribute("aria-busy");
+    btn.disabled = false;
+  }
+}
+
 async function doLogImport() {
   const log = $("log-import-input").value.trim();
   if (!log) {
@@ -928,7 +990,7 @@ async function fetchAndRenderNote(style) {
   if (!CURRENT_NOTE) return;
   $("note-output").value = "Loading…";
   const overrides = Object.fromEntries(LOG_OVERRIDES);
-  const excluded = [...EXCLUDED_SPELL_IDS];
+  const excluded = effectiveExcludedSpellIds();
   try {
     const data = await api("/api/note", {
       method: "POST",
@@ -1014,7 +1076,13 @@ async function boot() {
   $("copy-btn").addEventListener("click", copyNote);
   $("back-btn").addEventListener("click", () => {
     $("note-panel").hidden = true;
-    $("results-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  // Direct Log tab
+  $("direct-btn").addEventListener("click", doDirectLog);
+  $("direct-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    doDirectLog();
   });
 
   // Settings tab
@@ -1032,12 +1100,6 @@ async function boot() {
   $("roster-add-form").addEventListener("submit", (e) => {
     e.preventDefault();
     doManualAdd();
-  });
-  $("include-dps-cds-input").addEventListener("change", (e) => {
-    INCLUDE_DPS_CDS = e.target.checked;
-    saveSettings();
-    renderSpellFilter();
-    if (CURRENT_NOTE) debouncedRegenerateNote();
   });
   $("roster-clear-btn").addEventListener("click", () => {
     if (!confirm("Clear all roster members?")) return;
