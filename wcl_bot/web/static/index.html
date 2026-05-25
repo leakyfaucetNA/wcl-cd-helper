@@ -197,7 +197,13 @@
           </div>
         </details>
 
-        <button type="submit" id="discover-btn">Find matching kills</button>
+        <div class="discover-actions">
+          <button type="submit" id="discover-btn">Find matching kills</button>
+          <label class="inline-action" title="Skip the disk cache and re-hit the API; the response still updates the cache for next time.">
+            <input type="checkbox" id="bypass-cache-input">
+            Fresh Call
+          </label>
+        </div>
       </form>
     </article>
 

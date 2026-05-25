@@ -38,6 +38,7 @@ class DiscoverRequest(BaseModel):
     skip_top: int = 0
     pages: int = Field(20, ge=1, le=100)
     include_extra_healers: bool = False
+    bypass_cache: bool = False       # one-shot fresh fetch, ignores query cache
 
 
 class MatchSummary(BaseModel):

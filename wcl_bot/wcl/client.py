@@ -130,6 +130,7 @@ class WCLClient:
         token_cache_dir: Path | str | None = DEFAULT_TOKEN_CACHE_DIR,
         query_cache_dir: Path | str | None = DEFAULT_QUERY_CACHE_DIR,
         cache_disabled: bool = False,
+        cache_refresh: bool = False,
     ) -> None:
         cid = client_id or os.environ.get("WCL_CLIENT_ID")
         secret = client_secret or os.environ.get("WCL_CLIENT_SECRET")
@@ -157,7 +158,12 @@ class WCLClient:
         self._query_cache_dir: Path | None = (
             Path(query_cache_dir) if query_cache_dir is not None else None
         )
+        # `cache_disabled`: skip both read and write (totally bypass cache).
+        # `cache_refresh`: skip the read so we always re-hit the API, but
+        # still write the fresh response so the cache is repopulated for
+        # subsequent normal requests. Used by the "Fresh Call" toggle.
         self._cache_disabled = cache_disabled
+        self._cache_refresh = cache_refresh
         # Cheap counters for diagnostics; reset per WCLClient instance.
         self.cache_hits = 0
         self.cache_misses = 0
@@ -224,13 +230,19 @@ class WCLClient:
         if effective_ttl is not None and self._query_cache_dir is not None:
             key = _query_cache_key(query, variables)
             cache_path = _query_cache_path(key, self._query_cache_dir)
-            cached = _load_cached_query(cache_path, effective_ttl)
-            if cached is not None:
-                self.cache_hits += 1
-                log.debug("Cache hit: %s", key)
-                return cached
-            self.cache_misses += 1
-            log.debug("Cache miss: %s", key)
+            if self._cache_refresh:
+                # Forced refresh — skip the read, but cache_path stays set
+                # so the fresh response gets written below.
+                self.cache_misses += 1
+                log.debug("Cache forced-refresh: %s", key)
+            else:
+                cached = _load_cached_query(cache_path, effective_ttl)
+                if cached is not None:
+                    self.cache_hits += 1
+                    log.debug("Cache hit: %s", key)
+                    return cached
+                self.cache_misses += 1
+                log.debug("Cache miss: %s", key)
 
         payload = await self._post_graphql(query, variables)
         # Single retry on 401 in case the cached token was revoked server-side.

@@ -800,6 +800,7 @@ async function doDiscover(ev) {
     pages: parseInt($("pages-input").value, 10),
     skip_top: parseInt($("skip-top-input").value, 10),
     include_extra_healers: $("include-extra-input").checked,
+    bypass_cache: $("bypass-cache-input").checked,
   };
 
   const btn = $("discover-btn");
@@ -817,6 +818,9 @@ async function doDiscover(ev) {
   } finally {
     btn.removeAttribute("aria-busy");
     btn.disabled = false;
+    // Fresh Call is per-click: uncheck after submit so it always has to
+    // be opted into again.
+    $("bypass-cache-input").checked = false;
   }
 }
 
@@ -944,14 +948,17 @@ function renderLogDetail(container, data) {
     container.innerHTML = `<span class="muted">No healer data.</span>`;
     return;
   }
-  const rows = data.healers.map((h) => `
+  const rows = data.healers.map((h) => {
+    const color = CLASS_COLORS_HEX[h.wow_class] || "";
+    return `
     <tr class="class-${h.wow_class}">
-      <td>${h.name}</td>
+      <td><span style="color: ${color} !important; font-weight: 600;">${h.name}</span></td>
       <td>${h.spec}</td>
       <td class="num">${h.hps != null ? fmtHps(h.hps) : "—"}</td>
       <td class="num ${percentileClass(h.parse_percent)}">${h.parse_percent != null ? h.parse_percent.toFixed(0) : "—"}</td>
       <td class="num ${activeClass(h.active_time_pct)}">${h.active_time_pct != null ? h.active_time_pct.toFixed(1) + "%" : "—"}</td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
   container.innerHTML = `
     <table class="detail-table">
       <thead><tr>

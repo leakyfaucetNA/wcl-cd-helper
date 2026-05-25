@@ -408,7 +408,18 @@ async def discover(
     except CompFilterError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    client = _client(request)
+    # When the user ticks "Fresh Call" in the UI, use a one-shot client
+    # in cache-refresh mode for THIS request only. Refresh mode skips the
+    # cache READ (always hits the API) but still WRITES the fresh response
+    # back to disk, so the next normal request benefits from the new data.
+    if payload.bypass_cache:
+        from wcl_bot.wcl import WCLClient
+        async with WCLClient(cache_refresh=True) as one_shot:
+            return await _discover_with_client(one_shot, payload, target_comp, filters)
+    return await _discover_with_client(_client(request), payload, target_comp, filters)
+
+
+async def _discover_with_client(client, payload, target_comp, filters) -> DiscoverResponse:
     try:
         matches = await find_matching_kills(
             client,

@@ -2,6 +2,23 @@
 
 .muted { color: var(--pico-muted-color); font-weight: normal; font-size: 0.9em; }
 
+/* Submit button + "Fresh Call" toggle on one line. */
+.discover-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+.discover-actions > button { margin: 0; }
+.inline-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-weight: normal;
+}
+.inline-action input { margin: 0; }
+
 /* Help text under checkbox labels (e.g. "Sync to roster", "Also include
    fights with more healers") was overlapping the label. Force it onto its
    own line aligned under the label text. */
