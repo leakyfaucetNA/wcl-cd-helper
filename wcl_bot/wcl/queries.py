@@ -104,6 +104,26 @@ query GetReportPlayerDetails($code: String!, $fightIDs: [Int]) {
 }
 """
 
+# Per-character list of all their parses on a given encounter (across
+# every report they've logged). Each entry is one fight — we match by
+# report.code to find this-fight's actual Parse %. The character-overall
+# numbers in report.rankings(...) are aggregate, not per-fight, so this
+# is the only source for the value WCL displays in the healing tab.
+GET_CHARACTER_ENCOUNTER_RANKINGS = """
+query GetCharacterEncounterRankings(
+  $name: String!
+  $serverSlug: String!
+  $serverRegion: String!
+  $encounterID: Int!
+) {
+  characterData {
+    character(name: $name, serverSlug: $serverSlug, serverRegion: $serverRegion) {
+      encounterRankings(encounterID: $encounterID)
+    }
+  }
+}
+"""
+
 # Per-player healing table for a fight — includes total healing, activeTime
 # (ms a player was performing actions), overheal, etc. We pull activeTime
 # to filter out logs where a healer died early (their CD timings would be

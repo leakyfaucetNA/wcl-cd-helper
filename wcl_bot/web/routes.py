@@ -503,32 +503,6 @@ async def _discover_with_client(client, payload, target_comp, filters) -> Discov
     return DiscoverResponse(server_filter=server_filter_display, matches=summaries)
 
 
-@router.get("/debug/rankings_raw")
-async def debug_rankings_raw(request: Request, code: str, fight_id: int):
-    """One-off diagnostic. Dumps the raw report.rankings + table responses
-    for a (report, fight) so we can pin down which field actually holds
-    the per-fight Parse % WCL shows in the log's healing tab."""
-    client = _client(request)
-    out: dict = {"code": code, "fight_id": fight_id}
-    try:
-        out["rankings"] = await client.execute(
-            queries.GET_REPORT_FIGHT_RANKINGS,
-            {"code": code, "fightID": fight_id},
-            cache_ttl_seconds=None,  # always fresh for debugging
-        )
-    except WCLError as exc:
-        out["rankings_error"] = str(exc)
-    try:
-        out["table"] = await client.execute(
-            queries.GET_HEALING_TABLE,
-            {"code": code, "fightID": fight_id},
-            cache_ttl_seconds=None,
-        )
-    except WCLError as exc:
-        out["table_error"] = str(exc)
-    return out
-
-
 @router.post("/log_detail", response_model=LogDetailResponse)
 async def log_detail(
     request: Request, payload: LogDetailRequest
@@ -583,33 +557,55 @@ async def log_detail(
 async def _fetch_per_healer_metrics(
     client, report_code: str, fight_id: int, fight_duration_ms: int,
 ) -> dict[str, dict]:
-    """For one (report, fight), pull per-healer Parse %, HPS, and active-time %.
-    Tolerant of missing fields / failed sub-queries — returns whatever we got.
+    """For one (report, fight), pull per-healer Parse %, HPS, active-time %.
+    Returns {player_name: {"parse_percent"?, "hps"?, "active_time_pct"?}}.
 
-    Returns {player_name: {"parse_percent": float?, "hps": float?, "active_time_pct": float?}}.
-
-    HPS is computed from the healing table's `total` divided by fight duration —
-    `report.rankings.amount` is a normalized rank-score, not raw HPS. Parse %
-    prefers `bracketPercent` (ilvl-filtered, matches WCL's "Parse" column) over
-    `rankPercent` (unfiltered).
+    Parse % is THIS fight's actual percentile (matches WCL's healing-tab
+    "Parse" column). Sourced by fanning out to each healer's
+    characterData.character.encounterRankings and locating the rank entry
+    whose report.code matches this report — report.rankings(fightIDs)
+    only exposes character-aggregate stats, not per-fight values.
     """
     out: dict[str, dict] = {}
+    healer_info: dict[str, dict] = {}    # name -> {server_slug, server_region}
+    encounter_id: int | None = None
 
-    # 1. Rankings → parse % (bracketPercent preferred). One cached call.
+    # 1. Report rankings — fast (one cached call). Extract encounter id and
+    # per-healer (name, server, region) so we can fan out to char rankings.
     try:
         rank_data = await client.execute(
             queries.GET_REPORT_FIGHT_RANKINGS,
             {"code": report_code, "fightID": fight_id},
             cache_ttl_seconds=CACHE_TTL_STATIC,
         )
-        for name, metrics in _extract_healer_metrics(
+        for name, info in _extract_healer_server_info(
             rank_data.get("reportData", {}).get("report", {}).get("rankings")
         ).items():
-            out.setdefault(name, {})["parse_percent"] = _pick_parse_percent(metrics)
+            healer_info[name] = info
+        encounter_id = _extract_encounter_id(
+            rank_data.get("reportData", {}).get("report", {}).get("rankings")
+        )
     except (WCLError, KeyError) as exc:
         log.warning("rankings fetch failed for %s#%d: %s", report_code, fight_id, exc)
 
-    # 2. Healing table → activeTime AND total healing (for HPS). One cached call.
+    # 2. Per-healer character rankings — one call each. Gives this-fight Parse %.
+    if encounter_id is not None and healer_info:
+        sem = asyncio.Semaphore(10)
+        async def one_parse(name, info):
+            async with sem:
+                pct = await _fetch_char_fight_parse(
+                    client, name, info["server_slug"], info["server_region"],
+                    encounter_id, report_code, fight_id,
+                )
+            return name, pct
+        results = await asyncio.gather(
+            *(one_parse(n, i) for n, i in healer_info.items())
+        )
+        for name, pct in results:
+            if pct is not None:
+                out.setdefault(name, {})["parse_percent"] = pct
+
+    # 3. Healing table → activeTime + total healing (HPS). One cached call.
     try:
         tbl_data = await client.execute(
             queries.GET_HEALING_TABLE,
@@ -632,6 +628,92 @@ async def _fetch_per_healer_metrics(
         log.warning("healing table fetch failed for %s#%d: %s", report_code, fight_id, exc)
 
     return out
+
+
+def _extract_healer_server_info(blob) -> dict[str, dict]:
+    """From the report rankings blob, pull {name: {server_slug, server_region}}
+    for every healer entry."""
+    if not isinstance(blob, dict):
+        return {}
+    entries = blob.get("data") or [blob]
+    out: dict[str, dict] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        healers = (entry.get("roles") or {}).get("healers") or {}
+        for c in healers.get("characters") or []:
+            if not isinstance(c, dict):
+                continue
+            name = c.get("name")
+            server = c.get("server") or {}
+            if not name:
+                continue
+            out[name] = {
+                "server_slug": _normalize_realm_slug(server.get("name", "")),
+                "server_region": str(server.get("region", "")).upper(),
+            }
+    return out
+
+
+def _extract_encounter_id(blob) -> int | None:
+    """Encounter ID lives under data[0].encounter.id in the rankings blob."""
+    if not isinstance(blob, dict):
+        return None
+    entries = blob.get("data") or [blob]
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        enc = entry.get("encounter") or {}
+        eid = enc.get("id")
+        if isinstance(eid, int):
+            return eid
+    return None
+
+
+async def _fetch_char_fight_parse(
+    client, char_name: str, server_slug: str, server_region: str,
+    encounter_id: int, report_code: str, fight_id: int,
+) -> float | None:
+    """Pull the character's encounterRankings list and locate the parse
+    matching (report_code [, fight_id]). Return its per-fight percentile —
+    prefer bracketPercent (ilvl-filtered, matches WCL's headline Parse %)
+    then rankPercent. None if the character or matching parse isn't found.
+    """
+    if not (char_name and server_slug and server_region):
+        return None
+    try:
+        data = await client.execute(
+            queries.GET_CHARACTER_ENCOUNTER_RANKINGS,
+            {
+                "name": char_name,
+                "serverSlug": server_slug,
+                "serverRegion": server_region,
+                "encounterID": encounter_id,
+            },
+            cache_ttl_seconds=CACHE_TTL_STATIC,
+        )
+    except WCLError as exc:
+        log.warning("char rankings failed for %s (%s-%s): %s",
+                    char_name, server_slug, server_region, exc)
+        return None
+    char = (data.get("characterData") or {}).get("character")
+    if not isinstance(char, dict):
+        return None
+    blob = char.get("encounterRankings")
+    if not isinstance(blob, dict):
+        return None
+    ranks = blob.get("ranks") or []
+    for r in ranks:
+        if not isinstance(r, dict):
+            continue
+        rep = r.get("report") or {}
+        if rep.get("code") != report_code:
+            continue
+        # Some shapes also expose fightID per rank — match when present.
+        if rep.get("fightID") is not None and rep.get("fightID") != fight_id:
+            continue
+        return r.get("bracketPercent") or r.get("rankPercent")
+    return None
 
 
 def _extract_healing_table_data(blob) -> dict[str, dict[str, float]]:
@@ -664,59 +746,6 @@ def _extract_healing_table_data(blob) -> dict[str, dict[str, float]]:
             row["total_healing"] = float(total)
         if row:
             out[name] = row
-    return out
-
-
-# Field-name candidates for "Parse %" (this-fight ilvl-bracketed percentile),
-# in priority order. `bracketPercent` matches WCL's headline "Parse" column;
-# `rankPercent` (no bracket) is the older alias. The other names are
-# defensive fallbacks for shape drift.
-_PARSE_PCT_FIELDS = (
-    "bracketPercent",
-    "rankPercent",
-    "todayPercent",
-    "parsePercent",
-    "percentile",
-)
-
-
-def _pick_parse_percent(metrics: dict[str, float]) -> float | None:
-    for k in _PARSE_PCT_FIELDS:
-        if k in metrics:
-            return metrics[k]
-    return None
-
-
-def _extract_healer_metrics(blob) -> dict[str, dict[str, float]]:
-    """Walk the rankings JSON blob and pull every numeric field per healer.
-
-    Returns {player_name: {field_name: value, ...}}. Surfacing all numeric
-    fields (not just one) lets the UI display them and lets us identify
-    which one corresponds to "Parse %" on the WCL site.
-    """
-    if not isinstance(blob, dict):
-        return {}
-    entries = blob.get("data") or [blob]
-    out: dict[str, dict[str, float]] = {}
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        roles = entry.get("roles") or {}
-        for _role_name, role_block in roles.items():
-            chars = (role_block or {}).get("characters") or []
-            for c in chars:
-                if not isinstance(c, dict):
-                    continue
-                name = c.get("name")
-                if not name:
-                    continue
-                metrics: dict[str, float] = {}
-                for k, v in c.items():
-                    if isinstance(v, bool):
-                        continue
-                    if isinstance(v, (int, float)):
-                        metrics[k] = float(v)
-                out[name] = metrics
     return out
 
 
