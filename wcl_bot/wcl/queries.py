@@ -104,6 +104,20 @@ query GetReportPlayerDetails($code: String!, $fightIDs: [Int]) {
 }
 """
 
+# Per-player healing table for a fight — includes total healing, activeTime
+# (ms a player was performing actions), overheal, etc. We pull activeTime
+# to filter out logs where a healer died early (their CD timings would be
+# misleading for note-stealing).
+GET_HEALING_TABLE = """
+query GetHealingTable($code: String!, $fightID: Int!) {
+  reportData {
+    report(code: $code) {
+      table(dataType: Healing, fightIDs: [$fightID])
+    }
+  }
+}
+"""
+
 # Per-player parse percentiles for a specific (report, fight). Returns a
 # scalar JSON blob — actual shape is verified empirically and parsed
 # tolerantly in routes.py.

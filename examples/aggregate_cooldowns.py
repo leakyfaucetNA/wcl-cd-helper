@@ -35,7 +35,6 @@ async def main(args: argparse.Namespace) -> int:
             difficulty=args.difficulty,
             target_comp=target_comp,
             max_pages=args.pages,
-            drop_fastest_pct=args.drop_pct,
             skip_top=args.skip_top,
             metric=args.metric,
             server_region=args.region,
@@ -82,7 +81,6 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("difficulty", type=int, help="3=Normal, 4=Heroic, 5=Mythic")
     p.add_argument("comp", help='e.g. "hpriest,hpal,rdruid,preg"')
     p.add_argument("--pages", type=int, default=20)
-    p.add_argument("--drop-pct", type=float, default=0.25)
     p.add_argument("--skip-top", type=int, default=100)
     p.add_argument("--metric", default="execution", choices=["execution", "speed"])
     p.add_argument("--region", default=None)

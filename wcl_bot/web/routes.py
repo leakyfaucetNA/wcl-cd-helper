@@ -1,6 +1,7 @@
 """API endpoints for the web UI."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -13,7 +14,6 @@ from wcl_bot.cooldowns import (
     HEALER_COOLDOWNS,
     extract_cooldowns,
     fetch_fight_cooldowns,
-    score_logs,
 )
 from wcl_bot.matcher import (
     CompFilterError,
@@ -417,7 +417,6 @@ async def discover(
             target_comp=target_comp,
             comp_filters=filters,
             max_pages=payload.pages,
-            drop_fastest_pct=payload.drop_fastest_pct,
             skip_top=payload.skip_top,
             metric=payload.metric,
             server_region=payload.region,
@@ -433,29 +432,61 @@ async def discover(
     if not matches:
         return DiscoverResponse(server_filter=server_filter_display, matches=[])
 
+    # Pre-warm the cooldown cache (note generation reuses these results).
+    # We don't need score_logs anymore — replaced by per-fight HPS / active-%
+    # metrics fetched separately.
     fight_cds = await extract_cooldowns(client, matches)
-    scores = score_logs(
-        fight_cds,
-        outlier_threshold_ms=int(payload.outlier_threshold_seconds * 1000),
-    )
+
+    # Pull per-fight rankings + healing-table metrics in parallel. One pair of
+    # cached calls per match. The data we want:
+    #   - HPS (rankings.amount) → sum across healers = total_hps
+    #   - rankPercent           → mean across healers = avg_rank_percent
+    #   - activeTime (table)    → / fight duration   = active_time_pct
+    sem = asyncio.Semaphore(10)
+    async def one_metrics(fc):
+        async with sem:
+            return await _fetch_per_healer_metrics(
+                client,
+                fc.kill.ranking.report_code,
+                fc.kill.ranking.fight_id,
+                fc.fight_duration_ms,
+            )
+    metrics_by_match = await asyncio.gather(*(one_metrics(fc) for fc in fight_cds))
 
     summaries: list[MatchSummary] = []
-    for s in scores:
-        r = s.fight.kill.ranking
+    for idx, (fc, per_healer) in enumerate(zip(fight_cds, metrics_by_match), start=1):
+        r = fc.kill.ranking
+        # Restrict aggregation to this fight's healers (per_healer might
+        # contain DPS/tanks too if WCL returns them; we only care about
+        # the matched comp).
+        healer_names = {h.name for h in fc.kill.healers}
+        hps_vals = []
+        rp_vals = []
+        at_vals = []
+        for name in healer_names:
+            m = per_healer.get(name, {})
+            if m.get("hps") is not None:
+                hps_vals.append(m["hps"])
+            if m.get("parse_percent") is not None:
+                rp_vals.append(m["parse_percent"])
+            if m.get("active_time_pct") is not None:
+                at_vals.append(m["active_time_pct"])
+
         summaries.append(
             MatchSummary(
-                index=s.index,
+                index=idx,
                 report_code=r.report_code,
                 fight_id=r.fight_id,
-                url=s.fight.kill.url,
+                url=fc.kill.url,
                 guild=r.guild_name,
                 region=r.server_region,
-                duration_ms=s.fight.fight_duration_ms,
-                healer_count=len(s.fight.kill.healers),
-                n_presses=s.n_presses,
-                n_unique_spells=s.n_unique_spells,
-                avg_shift_ms=s.avg_shift_ms,
-                n_outliers=s.n_outliers,
+                duration_ms=fc.fight_duration_ms,
+                healer_count=len(fc.kill.healers),
+                guild_rank=r.rank,
+                total_hps=sum(hps_vals) if hps_vals else None,
+                avg_rank_percent=(sum(rp_vals) / len(rp_vals)) if rp_vals else None,
+                avg_active_pct=(sum(at_vals) / len(at_vals)) if at_vals else None,
+                min_active_pct=min(at_vals) if at_vals else None,
             )
         )
     return DiscoverResponse(server_filter=server_filter_display, matches=summaries)
@@ -470,29 +501,30 @@ async def log_detail(
     which returns a JSON scalar — shape is parsed tolerantly."""
     client = _client(request)
 
-    # Fetch playerDetails for healer identity, and rankings for percentiles.
+    # We need the fight duration to compute active-time %, so grab fight
+    # info alongside playerDetails. Both cached.
+    from wcl_bot.matcher.parsing import parse_healers
     pd_data = await client.execute(
         queries.GET_REPORT_PLAYER_DETAILS,
         {"code": payload.report_code, "fightIDs": [payload.fight_id]},
         cache_ttl_seconds=CACHE_TTL_STATIC,
     )
-    from wcl_bot.matcher.parsing import parse_healers
     healers = parse_healers(pd_data)
 
-    try:
-        rank_data = await client.execute(
-            queries.GET_REPORT_FIGHT_RANKINGS,
-            {"code": payload.report_code, "fightID": payload.fight_id},
-            cache_ttl_seconds=CACHE_TTL_STATIC,
-        )
-        blob = rank_data["reportData"]["report"]["rankings"]
-        per_healer_metrics = _extract_healer_metrics(blob)
-    except (WCLError, KeyError) as exc:
-        log.warning(
-            "rankings fetch failed for %s#%d: %s — returning healers without metrics",
-            payload.report_code, payload.fight_id, exc,
-        )
-        per_healer_metrics = {}
+    fight_info = await client.execute(
+        queries.GET_FIGHT_TIMES,
+        {"code": payload.report_code, "fightID": payload.fight_id},
+        cache_ttl_seconds=CACHE_TTL_STATIC,
+    )
+    fights = fight_info["reportData"]["report"]["fights"]
+    if fights:
+        duration_ms = int(fights[0]["endTime"]) - int(fights[0]["startTime"])
+    else:
+        duration_ms = 0
+
+    metrics = await _fetch_per_healer_metrics(
+        client, payload.report_code, payload.fight_id, duration_ms
+    )
 
     return LogDetailResponse(
         report_code=payload.report_code,
@@ -502,12 +534,82 @@ async def log_detail(
                 name=h.name,
                 wow_class=h.wow_class,
                 spec=h.spec,
-                rank_percent=_pick_parse_percent(per_healer_metrics.get(h.name, {})),
-                metrics=per_healer_metrics.get(h.name, {}),
+                parse_percent=metrics.get(h.name, {}).get("parse_percent"),
+                hps=metrics.get(h.name, {}).get("hps"),
+                active_time_pct=metrics.get(h.name, {}).get("active_time_pct"),
             )
             for h in healers
         ],
     )
+
+
+async def _fetch_per_healer_metrics(
+    client, report_code: str, fight_id: int, fight_duration_ms: int,
+) -> dict[str, dict]:
+    """For one (report, fight), pull per-healer Parse %, HPS, and active-time %.
+    Tolerant of missing fields / failed sub-queries — returns whatever we got.
+
+    Returns {player_name: {"parse_percent": float?, "hps": float?, "active_time_pct": float?}}.
+    """
+    out: dict[str, dict] = {}
+    # Rankings → parse % and hps (the "amount" field). One cached call.
+    try:
+        rank_data = await client.execute(
+            queries.GET_REPORT_FIGHT_RANKINGS,
+            {"code": report_code, "fightID": fight_id},
+            cache_ttl_seconds=CACHE_TTL_STATIC,
+        )
+        for name, metrics in _extract_healer_metrics(
+            rank_data.get("reportData", {}).get("report", {}).get("rankings")
+        ).items():
+            out.setdefault(name, {})["parse_percent"] = _pick_parse_percent(metrics)
+            amt = metrics.get("amount")
+            if amt is not None:
+                out[name]["hps"] = float(amt)
+    except (WCLError, KeyError) as exc:
+        log.warning("rankings fetch failed for %s#%d: %s", report_code, fight_id, exc)
+
+    # Healing table → activeTime. Another cached call.
+    try:
+        tbl_data = await client.execute(
+            queries.GET_HEALING_TABLE,
+            {"code": report_code, "fightID": fight_id},
+            cache_ttl_seconds=CACHE_TTL_STATIC,
+        )
+        for name, active_ms in _extract_active_time(
+            tbl_data.get("reportData", {}).get("report", {}).get("table")
+        ).items():
+            if fight_duration_ms > 0:
+                pct = max(0.0, min(100.0, active_ms / fight_duration_ms * 100.0))
+                out.setdefault(name, {})["active_time_pct"] = pct
+    except (WCLError, KeyError) as exc:
+        log.warning("healing table fetch failed for %s#%d: %s", report_code, fight_id, exc)
+
+    return out
+
+
+def _extract_active_time(blob) -> dict[str, float]:
+    """Walk the healing-table JSON blob and pull {player_name: activeTime_ms}.
+
+    Common shape: data.entries[] each with name, activeTime (ms). Tolerant
+    of variants since the table query returns a scalar JSON blob."""
+    if not isinstance(blob, dict):
+        return {}
+    container = blob.get("data") if isinstance(blob.get("data"), dict) else blob
+    entries = container.get("entries") or []
+    if not isinstance(entries, list):
+        return {}
+    out: dict[str, float] = {}
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        name = e.get("name")
+        # activeTime is ms in WCL's table responses. Some shapes also have
+        # activeTimeReduced; we use the un-reduced figure.
+        active = e.get("activeTime")
+        if name and isinstance(active, (int, float)):
+            out[name] = float(active)
+    return out
 
 
 # Field-name candidates for "Parse %" (this-fight percentile), in priority order.

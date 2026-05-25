@@ -37,8 +37,6 @@ class DiscoverRequest(BaseModel):
     region: str | None = None
     skip_top: int = 0
     pages: int = Field(20, ge=1, le=100)
-    drop_fastest_pct: float = Field(0.25, ge=0.0, le=1.0)
-    outlier_threshold_seconds: float = Field(10.0, ge=0.0)
     include_extra_healers: bool = False
 
 
@@ -51,10 +49,11 @@ class MatchSummary(BaseModel):
     region: str | None
     duration_ms: int
     healer_count: int                # for UI grouping (4 / 5 / 6 healers)
-    n_presses: int
-    n_unique_spells: int
-    avg_shift_ms: int
-    n_outliers: int
+    guild_rank: int | None           # position in WCL's leaderboard pool
+    total_hps: float | None          # sum of healers' HPS (amount)
+    avg_rank_percent: float | None   # mean Parse % across healers
+    avg_active_pct: float | None     # mean active-time % across healers
+    min_active_pct: float | None     # lowest healer's active-time % (dead-healer flag)
 
 
 class DiscoverResponse(BaseModel):
@@ -83,10 +82,9 @@ class HealerDetail(BaseModel):
     name: str
     wow_class: str
     spec: str
-    rank_percent: float | None        # what we believe is "Parse %" for this fight
-    # All numeric fields from the rankings blob, surfaced for diagnosis.
-    # Helps figure out which field is actually "Parse %" vs "Best %" etc.
-    metrics: dict[str, float] = {}
+    parse_percent: float | None       # rankPercent from report.rankings (this fight)
+    hps: float | None                 # amount from report.rankings
+    active_time_pct: float | None     # activeTime / fight duration * 100
 
 
 class LogDetailResponse(BaseModel):

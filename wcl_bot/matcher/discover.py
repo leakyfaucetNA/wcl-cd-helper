@@ -12,6 +12,7 @@ by (report_code, fight_id) across pools (exact wins on tie).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from dataclasses import dataclass
 
@@ -54,7 +55,6 @@ async def find_matching_kills(
     target_comp: TargetComp,
     comp_filters: list[tuple[int | None, str]],
     max_pages: int = 20,
-    drop_fastest_pct: float = 0.25,
     skip_top: int = 0,
     metric: str = "execution",
     server_region: str | None = None,
@@ -137,12 +137,8 @@ async def find_matching_kills(
         )
         pool_matches = [m for m in results if m is not None]
         log.info("[%s] Matched %d / %d unique fights", label, len(pool_matches), len(unique))
-
+        # Sort longest-duration first so user sees the meatiest pulls up top.
         pool_matches.sort(key=lambda m: m.ranking.duration_ms, reverse=True)
-        if pool_matches and drop_fastest_pct > 0:
-            keep = len(pool_matches) - int(len(pool_matches) * drop_fastest_pct)
-            pool_matches = pool_matches[: max(1, keep)]
-
         return pool_matches
 
     # Run all pools in parallel. Order them so the exact pool's results
@@ -175,6 +171,9 @@ async def _fetch_rankings(
     server_region: str | None,
     comp_filter: str,
 ) -> list[RankingFight]:
+    """Page through fightRankings. Each returned RankingFight gets `rank`
+    populated with its 1-indexed position in the pool — useful so the UI
+    can show "Rank #3 in the 5-heal leaderboard"."""
     out: list[RankingFight] = []
     for page in range(1, max_pages + 1):
         data = await client.execute(
@@ -191,7 +190,8 @@ async def _fetch_rankings(
         )
         blob = data["worldData"]["encounter"]["fightRankings"]
         fights, has_more = parse_rankings_page(blob)
-        out.extend(fights)
+        for f in fights:
+            out.append(dataclasses.replace(f, rank=len(out) + 1))
         if not has_more:
             break
     return out

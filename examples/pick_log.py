@@ -62,7 +62,6 @@ async def _fetch(args: argparse.Namespace) -> list[FightCooldowns]:
             target_comp=target_comp,
             comp_filters=filters,
             max_pages=args.pages,
-            drop_fastest_pct=args.drop_pct,
             skip_top=args.skip_top,
             metric=args.metric,
             server_region=args.region,
@@ -94,8 +93,7 @@ def _print_summary(scores: list[LogScore]) -> None:
             f"  [{s.index}] {_fmt_mmss(s.fight.fight_duration_ms):>4}  "
             f"{guild_region:<28} "
             f"{s.n_presses:>2} presses / {s.n_unique_spells:>2} CDs   "
-            f"{_fmt_seconds(s.avg_shift_ms):>6} avg shift, "
-            f"{s.n_outliers} outlier{'s' if s.n_outliers != 1 else ''}"
+            f"{_fmt_seconds(s.avg_shift_ms):>6} avg shift"
         )
     print()
 
@@ -167,9 +165,7 @@ def main() -> int:
         print("No matching kills.")
         return 1
 
-    scores = score_logs(
-        fight_cds, outlier_threshold_ms=int(args.outlier_threshold * 1000)
-    )
+    scores = score_logs(fight_cds)
 
     if args.pick is not None:
         if not (1 <= args.pick <= len(scores)):
@@ -194,7 +190,6 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("difficulty", type=int, help="3=Normal, 4=Heroic, 5=Mythic")
     p.add_argument("comp", help='e.g. "hpriest,hpal,rdruid,preg"')
     p.add_argument("--pages", type=int, default=20)
-    p.add_argument("--drop-pct", type=float, default=0.25)
     p.add_argument(
         "--skip-top",
         type=int,
@@ -206,13 +201,6 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--metric", default="execution", choices=["execution", "speed"])
     p.add_argument("--region", default=None)
     p.add_argument("--limit", type=int, default=None)
-    p.add_argument(
-        "--outlier-threshold",
-        type=float,
-        default=10.0,
-        help="Seconds; a press whose timing differs from cohort median by "
-             "more than this counts as an outlier (default 10s).",
-    )
     p.add_argument(
         "--pick",
         type=int,

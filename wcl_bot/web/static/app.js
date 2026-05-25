@@ -759,10 +759,20 @@ function fmtMmss(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function outlierClass(n) {
-  if (n <= 2) return "outliers-good";
-  if (n <= 5) return "outliers-warn";
-  return "outliers-bad";
+function fmtHps(hps) {
+  if (hps == null) return "—";
+  if (hps >= 1_000_000) return (hps / 1_000_000).toFixed(2) + "M";
+  if (hps >= 1_000)     return (hps / 1_000).toFixed(1) + "k";
+  return hps.toFixed(0);
+}
+
+// Active-time % coloring: < 80% = red (probably a death), 80-95 = yellow,
+// >= 95 = green.
+function activeClass(pct) {
+  if (pct == null) return "";
+  if (pct < 80) return "active-low";
+  if (pct < 95) return "active-mid";
+  return "active-high";
 }
 
 function percentileClass(p) {
@@ -789,8 +799,6 @@ async function doDiscover(ev) {
     region: $("region-select").value || null,
     pages: parseInt($("pages-input").value, 10),
     skip_top: parseInt($("skip-top-input").value, 10),
-    drop_fastest_pct: parseFloat($("drop-pct-input").value),
-    outlier_threshold_seconds: parseFloat($("outlier-input").value),
     include_extra_healers: $("include-extra-input").checked,
   };
 
@@ -833,23 +841,30 @@ function renderResults(data, targetN) {
   const onlyOneGroup = counts.length === 1;
 
   content.innerHTML = counts.map((hc) => {
-    const rows = groups[hc].map((m) => `
+    const rows = groups[hc].map((m) => {
+      const rank = m.guild_rank != null ? `#${m.guild_rank}` : "—";
+      const hps = m.total_hps != null ? fmtHps(m.total_hps) : "—";
+      const rankPct = m.avg_rank_percent != null ? m.avg_rank_percent.toFixed(0) : "—";
+      const avgAt  = m.avg_active_pct  != null ? m.avg_active_pct.toFixed(1) + "%" : "—";
+      const minAt  = m.min_active_pct  != null ? m.min_active_pct.toFixed(1) + "%" : "—";
+      return `
       <tr class="match-row" data-report="${m.report_code}" data-fight="${m.fight_id}" data-index="${m.index}">
         <td class="num">${m.index}</td>
+        <td class="num">${rank}</td>
         <td>${m.guild ?? "?"}</td>
         <td>${m.region ?? "?"}</td>
         <td class="num">${fmtMmss(m.duration_ms)}</td>
-        <td class="num">${m.n_presses}</td>
-        <td class="num">${m.n_unique_spells}</td>
-        <td class="num">${(m.avg_shift_ms / 1000).toFixed(1)}s</td>
-        <td class="num ${outlierClass(m.n_outliers)}">${m.n_outliers}</td>
+        <td class="num">${hps}</td>
+        <td class="num ${percentileClass(m.avg_rank_percent)}">${rankPct}</td>
+        <td class="num ${activeClass(m.avg_active_pct)}">${avgAt}</td>
+        <td class="num ${activeClass(m.min_active_pct)}">${minAt}</td>
         <td><a href="${m.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">WCL ↗</a></td>
         <td><button class="pick-btn outline" type="button">Generate note</button></td>
       </tr>
       <tr class="match-detail-row" data-for-index="${m.index}" hidden>
-        <td colspan="10"><div class="match-detail">Loading…</div></td>
-      </tr>
-    `).join("");
+        <td colspan="11"><div class="match-detail">Loading…</div></td>
+      </tr>`;
+    }).join("");
 
     // Default-open if it's the only group, or if it matches the user's
     // target healer count. Extras (N+1, N+2…) collapse by default.
@@ -863,10 +878,16 @@ function renderResults(data, targetN) {
         </summary>
         <table class="results-table">
           <thead><tr>
-            <th class="num">#</th><th>Guild</th><th>Region</th>
-            <th class="num">Duration</th><th class="num">Presses</th>
-            <th class="num">CDs</th><th class="num">Avg shift</th>
-            <th class="num">Outliers</th><th></th><th></th>
+            <th class="num">#</th>
+            <th class="num">Rank</th>
+            <th>Guild</th>
+            <th>Region</th>
+            <th class="num">Dur</th>
+            <th class="num">Total HPS</th>
+            <th class="num">Rank %</th>
+            <th class="num">Avg Active</th>
+            <th class="num">Min Active</th>
+            <th></th><th></th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -923,37 +944,24 @@ function renderLogDetail(container, data) {
     container.innerHTML = `<span class="muted">No healer data.</span>`;
     return;
   }
-  // Union of every metric field that appeared across this fight's healers.
-  // Shown so we can identify which one corresponds to WCL's "Parse %".
-  const fieldSet = new Set();
-  data.healers.forEach((h) => Object.keys(h.metrics || {}).forEach((k) => fieldSet.add(k)));
-  const fields = [...fieldSet].sort();
-
-  const headerCols = fields.map((f) => `<th class="num">${f}</th>`).join("");
-  const rows = data.healers.map((h) => {
-    const m = h.metrics || {};
-    const cells = fields.map((f) => {
-      const v = m[f];
-      if (v == null) return `<td class="num">—</td>`;
-      const isPct = f.toLowerCase().includes("percent") || f.toLowerCase().includes("pct");
-      const cls = isPct ? percentileClass(v) : "";
-      return `<td class="num ${cls}">${Number.isFinite(v) ? v.toFixed(1) : v}</td>`;
-    }).join("");
-    return `
-      <tr class="class-${h.wow_class}">
-        <td>${h.name}</td>
-        <td>${h.wow_class} / ${h.spec}</td>
-        ${cells}
-      </tr>
-    `;
-  }).join("");
+  const rows = data.healers.map((h) => `
+    <tr class="class-${h.wow_class}">
+      <td>${h.name}</td>
+      <td>${h.spec}</td>
+      <td class="num">${h.hps != null ? fmtHps(h.hps) : "—"}</td>
+      <td class="num ${percentileClass(h.parse_percent)}">${h.parse_percent != null ? h.parse_percent.toFixed(0) : "—"}</td>
+      <td class="num ${activeClass(h.active_time_pct)}">${h.active_time_pct != null ? h.active_time_pct.toFixed(1) + "%" : "—"}</td>
+    </tr>`).join("");
   container.innerHTML = `
     <table class="detail-table">
-      <thead><tr><th>Healer</th><th>Spec</th>${headerCols}</tr></thead>
+      <thead><tr>
+        <th>Healer</th><th>Spec</th>
+        <th class="num">HPS</th>
+        <th class="num">Parse %</th>
+        <th class="num">Active Time</th>
+      </tr></thead>
       <tbody>${rows}</tbody>
-    </table>
-    <small class="muted">All numeric fields from the rankings blob shown above so we can pinpoint Parse %. Once we confirm the field, the table will collapse to just that column.</small>
-  `;
+    </table>`;
 }
 
 // ---- Note ---------------------------------------------------------------
