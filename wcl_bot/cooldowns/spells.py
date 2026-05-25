@@ -102,7 +102,6 @@ HEALER_COOLDOWNS: dict[tuple[str, str], tuple[CooldownSpell, ...]] = {
         CooldownSpell(370564, "Stasis (Release)", "raid", purpose=PURPOSE_RAID_BURST_HEAL, display_name="Stasis Release"),
         CooldownSpell(359816, "Dream Flight", "raid", purpose=PURPOSE_RAID_BURST_HEAL),
         CooldownSpell(357170, "Time Dilation", "external", purpose=PURPOSE_SINGLE_EXT_DR),
-        CooldownSpell(374227, "Zephyr", "external", purpose=PURPOSE_RAID_DR),
     ),
 }
 
@@ -142,6 +141,7 @@ CLASS_RAID_COOLDOWNS: dict[str, tuple[CooldownSpell, ...]] = {
     ),
     "Evoker": (
         CooldownSpell(390386, "Fury of the Aspects", "raid", purpose=PURPOSE_UTILITY),
+        CooldownSpell(374227, "Zephyr", "raid", purpose=PURPOSE_RAID_DR),
     ),
 }
 
