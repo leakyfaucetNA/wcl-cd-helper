@@ -328,6 +328,50 @@ table.results-table .outliers-bad  { color: #d06b6b; }
   border-top: 1px solid var(--pico-card-border-color);
   padding-top: 0.5rem;
 }
+
+/* ---- Class tab bar inside the Tracked spells section ---- */
+.class-tabbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--pico-card-border-color);
+}
+.class-tab-btn {
+  background: transparent;
+  border: 1px solid var(--pico-card-border-color);
+  border-radius: 0.25rem;
+  padding: 0.2rem 0.7rem;
+  margin: 0;
+  width: auto;
+  font-size: 0.85em;
+  color: var(--pico-muted-color);
+  cursor: pointer;
+}
+.class-tab-btn:hover { color: var(--pico-color); }
+.class-tab-btn.active {
+  background: var(--pico-card-sectioning-background-color);
+  border-color: currentColor;
+  color: var(--pico-color);
+  font-weight: 600;
+}
+/* Class color on the tab text — inherits from the existing .class-X rules
+   already defined for .spec-label, but those only apply to descendants.
+   Repeat for class-tab-btn so the tab labels are tinted. */
+.class-tab-btn.class-DeathKnight { color: #c41e3a; }
+.class-tab-btn.class-DemonHunter { color: #a330c9; }
+.class-tab-btn.class-Druid       { color: #ff7c0a; }
+.class-tab-btn.class-Evoker      { color: #33937f; }
+.class-tab-btn.class-Hunter      { color: #aad372; }
+.class-tab-btn.class-Mage        { color: #3fc7eb; }
+.class-tab-btn.class-Monk        { color: #00ff98; }
+.class-tab-btn.class-Paladin     { color: #f48cba; }
+.class-tab-btn.class-Priest      { color: #f0ebe0; }
+.class-tab-btn.class-Rogue       { color: #fff468; }
+.class-tab-btn.class-Shaman      { color: #0070dd; }
+.class-tab-btn.class-Warlock     { color: #8788ee; }
+.class-tab-btn.class-Warrior     { color: #c69b6d; }
 .spell-filter-row {
   display: flex;
   align-items: center;

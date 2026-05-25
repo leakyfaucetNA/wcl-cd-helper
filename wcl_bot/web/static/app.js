@@ -90,27 +90,60 @@ async function loadTrackedSpells() {
   }
 }
 
+// Currently active spell-filter class tab. Persists for the session;
+// reset when the tab list is rebuilt and the previous selection is gone.
+let _activeSpellClass = null;
+
 function renderSpellFilter() {
+  const tabsEl = $("spell-class-tabs");
   const container = $("spell-filter-list");
   if (TRACKED_SPELLS.length === 0) {
+    tabsEl.innerHTML = "";
     container.innerHTML = `<small class="muted">No tracked spells loaded.</small>`;
     return;
   }
-  // Healer specs are always shown; the class-wide raid section is only
-  // shown when "Include DPS raid CDs" is on in Settings.
-  const spells = TRACKED_SPELLS.filter(
+  // Spells visible right now (healer always; raid only if toggle on).
+  const visible = TRACKED_SPELLS.filter(
     (s) => s.group === "healer" || (s.group === "raid" && INCLUDE_DPS_CDS)
   );
-  // Group by (class, spec) within each group bucket.
-  const buckets = { healer: new Map(), raid: new Map() };
-  for (const s of spells) {
-    const key = `${s.wow_class}|${s.spec}`;
-    const map = buckets[s.group] || buckets.healer;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(s);
+  // Classes that have any visible spell, in alphabetical order.
+  const classes = [...new Set(visible.map((s) => s.wow_class))].sort();
+  if (classes.length === 0) {
+    tabsEl.innerHTML = "";
+    container.innerHTML = `<small class="muted">Nothing tracked right now.</small>`;
+    return;
   }
-  const renderRows = (specsList) =>
-    specsList.map((s) => {
+  if (!classes.includes(_activeSpellClass)) {
+    _activeSpellClass = classes[0];
+  }
+
+  tabsEl.innerHTML = classes.map((cls) => {
+    const active = cls === _activeSpellClass ? "active" : "";
+    return `<button class="class-tab-btn ${active} class-${cls.replace(/\s/g, "")}"
+            type="button" data-class="${cls}">${cls}</button>`;
+  }).join("");
+  tabsEl.querySelectorAll(".class-tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      _activeSpellClass = btn.dataset.class;
+      renderSpellFilter();
+    });
+  });
+
+  renderSpellFilterContent(_activeSpellClass, visible);
+}
+
+function renderSpellFilterContent(wowClass, visibleSpells) {
+  const container = $("spell-filter-list");
+  const spells = visibleSpells.filter((s) => s.wow_class === wowClass);
+  // Group by spec within this class. Healer entries have real specs;
+  // class-wide raid entries use spec === "(any)".
+  const groups = new Map();
+  for (const s of spells) {
+    if (!groups.has(s.spec)) groups.set(s.spec, []);
+    groups.get(s.spec).push(s);
+  }
+  const renderRows = (list) =>
+    list.map((s) => {
       const checked = EXCLUDED_SPELL_IDS.has(s.spell_id) ? "" : "checked";
       return `
         <label class="spell-filter-row">
@@ -120,23 +153,14 @@ function renderSpellFilter() {
           <small class="muted">(${s.category})</small>
         </label>`;
     }).join("");
-  const renderBucket = (bucket) =>
-    [...bucket.entries()].map(([key, list]) => {
-      const [cls, spec] = key.split("|");
-      const label = spec === "(any)" ? cls : `${cls} / ${spec}`;
-      return `
-        <div class="spell-filter-group class-${cls.replace(/\s/g, "")}">
-          <h6 class="spell-filter-group-head">${label}</h6>
-          <div class="spell-filter-group-rows">${renderRows(list)}</div>
-        </div>`;
-    }).join("");
-
-  let html = renderBucket(buckets.healer);
-  if (buckets.raid.size) {
-    html += `<h5 class="spell-filter-section-head">Class-wide raid CDs</h5>`;
-    html += renderBucket(buckets.raid);
-  }
-  container.innerHTML = html;
+  container.innerHTML = [...groups.entries()].map(([spec, list]) => {
+    const heading = spec === "(any)" ? "Class-wide raid CDs" : spec;
+    return `
+      <div class="spell-filter-group class-${wowClass.replace(/\s/g, "")}">
+        <h6 class="spell-filter-group-head">${heading}</h6>
+        <div class="spell-filter-group-rows">${renderRows(list)}</div>
+      </div>`;
+  }).join("");
 
   container.querySelectorAll(".spell-filter-cb").forEach((cb) => {
     cb.addEventListener("change", () => {
