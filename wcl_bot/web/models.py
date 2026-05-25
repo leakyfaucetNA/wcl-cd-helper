@@ -69,6 +69,9 @@ class NoteRequest(BaseModel):
     # Optional WCL-name → display-name overrides applied at format time.
     # Used by the UI to remap discovered players to the user's own guild names.
     name_overrides: dict[str, str] = Field(default_factory=dict)
+    # Spell IDs to omit from the generated note + returned timeline. Frontend
+    # populates this from the persistent settings (excluded spells).
+    excluded_spell_ids: list[int] = Field(default_factory=list)
 
 
 class LogDetailRequest(BaseModel):
@@ -120,6 +123,25 @@ class HealerSpecsResponse(BaseModel):
     """The 6 retail healer (class, spec) pairs the bot tracks. Drives the
     web UI's checkbox grid so frontend doesn't hardcode them."""
     specs: list[HealerSpecRef]
+
+
+class TrackedSpell(BaseModel):
+    spell_id: int
+    name: str
+    label: str          # display name (e.g. "Avenging Wrath / Crusader")
+    category: str       # "raid" | "external"
+    wow_class: str
+    spec: str
+
+
+class TrackedSpellsResponse(BaseModel):
+    spells: list[TrackedSpell]
+
+
+class SettingsPayload(BaseModel):
+    """Persistent user settings. Currently just the spell-filter exclusion
+    set; will grow as we add other toggles."""
+    excluded_spell_ids: list[int] = Field(default_factory=list)
 
 
 class GuildRosterMember(BaseModel):

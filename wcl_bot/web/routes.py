@@ -47,6 +47,9 @@ from wcl_bot.web.models import (
     NoteResponse,
     RosterMember,
     RosterPayload,
+    SettingsPayload,
+    TrackedSpell,
+    TrackedSpellsResponse,
     TimelineEntry,
     ZoneRef,
     ZonesResponse,
@@ -56,6 +59,7 @@ from wcl_bot.web.models import (
 # single-user app (LAN-only, no auth). Multi-browser/multi-PC access is the
 # whole point of moving this off localStorage.
 ROSTER_STORE_PATH = Path.home() / ".config" / "wcl_bot" / "roster.json"
+SETTINGS_STORE_PATH = Path.home() / ".config" / "wcl_bot" / "settings.json"
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -100,6 +104,60 @@ async def put_roster(payload: RosterPayload) -> RosterPayload:
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Disk write failed: {exc}") from exc
     return payload
+
+
+def _load_settings_from_disk() -> SettingsPayload:
+    try:
+        raw = json.loads(SETTINGS_STORE_PATH.read_text())
+        return SettingsPayload(**raw)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError) as exc:
+        if not isinstance(exc, FileNotFoundError):
+            log.warning("Settings file unreadable at %s: %s", SETTINGS_STORE_PATH, exc)
+        return SettingsPayload()
+
+
+def _save_settings_to_disk(s: SettingsPayload) -> None:
+    try:
+        SETTINGS_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_STORE_PATH.write_text(json.dumps(s.model_dump(), indent=2))
+        SETTINGS_STORE_PATH.chmod(0o600)
+    except OSError as exc:
+        log.error("Could not write settings to %s: %s", SETTINGS_STORE_PATH, exc)
+        raise
+
+
+@router.get("/settings", response_model=SettingsPayload)
+async def get_settings() -> SettingsPayload:
+    return _load_settings_from_disk()
+
+
+@router.put("/settings", response_model=SettingsPayload)
+async def put_settings(payload: SettingsPayload) -> SettingsPayload:
+    try:
+        _save_settings_to_disk(payload)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Disk write failed: {exc}") from exc
+    return payload
+
+
+@router.get("/tracked_spells", response_model=TrackedSpellsResponse)
+async def tracked_spells() -> TrackedSpellsResponse:
+    """Every cooldown the bot tracks, flat list with class/spec context.
+    Drives the Search panel's spell-filter checkboxes."""
+    out: list[TrackedSpell] = []
+    for (cls, spec), spells in HEALER_COOLDOWNS.items():
+        for s in spells:
+            out.append(
+                TrackedSpell(
+                    spell_id=s.spell_id,
+                    name=s.name,
+                    label=s.label,
+                    category=s.category,
+                    wow_class=cls,
+                    spec=spec,
+                )
+            )
+    return TrackedSpellsResponse(spells=out)
 
 
 @router.get("/healer_specs", response_model=HealerSpecsResponse)
@@ -500,12 +558,23 @@ async def note(request: Request, payload: NoteRequest) -> NoteResponse:
     except WCLError as exc:
         raise HTTPException(status_code=502, detail=f"WCL: {exc}") from exc
 
+    # Apply the spell-exclusion filter once and use the trimmed FightCooldowns
+    # for both note formatting AND the returned timeline — keeps the textarea,
+    # preview, and any other downstream view consistent.
+    excluded = set(payload.excluded_spell_ids)
+    if excluded:
+        from dataclasses import replace
+        fc = replace(
+            fc,
+            events=[ev for ev in fc.events if ev.cast_spell_id not in excluded],
+        )
+
     style = NoteStyle(payload.style)
     note_text = format_note(fc, style, name_overrides=payload.name_overrides)
     timeline = [
         TimelineEntry(
             time_ms=ev.time_into_fight_ms,
-            healer_name=ev.healer.name,
+            healer_name=payload.name_overrides.get(ev.healer.name, ev.healer.name),
             healer_class=ev.healer.wow_class,
             healer_spec=ev.healer.spec,
             spell_label=ev.spell.label,

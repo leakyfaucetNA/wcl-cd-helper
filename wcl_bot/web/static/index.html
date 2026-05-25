@@ -158,6 +158,11 @@
           </label>
         </fieldset>
 
+        <details id="spell-filter-wrap">
+          <summary><strong>Tracked spells</strong> <small class="muted">— uncheck any cooldown you don't want in the note (saved server-side)</small></summary>
+          <div id="spell-filter-list"></div>
+        </details>
+
         <details>
           <summary>Advanced</summary>
           <div class="grid">
@@ -215,7 +220,16 @@
         <div id="note-remap"></div>
       </div>
 
-      <textarea id="note-output" rows="20" readonly></textarea>
+      <nav class="subtabbar" id="note-subtabs">
+        <button class="subtab-btn active" data-subtab="text" type="button">Note</button>
+        <button class="subtab-btn" data-subtab="preview" type="button">Preview</button>
+      </nav>
+      <div class="subtab-panel" data-subtab-panel="text">
+        <textarea id="note-output" rows="20" readonly></textarea>
+      </div>
+      <div class="subtab-panel" data-subtab-panel="preview" hidden>
+        <div id="note-preview" class="preview-frame"></div>
+      </div>
     </article>
 
     </section> <!-- /search tab panel -->

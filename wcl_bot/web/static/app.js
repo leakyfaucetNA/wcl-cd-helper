@@ -44,6 +44,90 @@ async function loadHealerSpecs() {
 // Reset whenever the user picks a different log.
 const LOG_OVERRIDES = new Map();
 
+// Persistent settings (server-side).
+let TRACKED_SPELLS = [];                  // [{spell_id, name, label, category, wow_class, spec}]
+const EXCLUDED_SPELL_IDS = new Set();     // mirror of settings.excluded_spell_ids
+
+async function loadSettingsFromServer() {
+  try {
+    const data = await api("/api/settings");
+    EXCLUDED_SPELL_IDS.clear();
+    for (const id of data.excluded_spell_ids || []) EXCLUDED_SPELL_IDS.add(id);
+  } catch (e) {
+    status(`Couldn't load settings: ${e.message}`, true);
+  }
+}
+
+let _settingsSaveTimer = null;
+function saveSettings() {
+  clearTimeout(_settingsSaveTimer);
+  _settingsSaveTimer = setTimeout(async () => {
+    try {
+      await api("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ excluded_spell_ids: [...EXCLUDED_SPELL_IDS] }),
+      });
+    } catch (e) {
+      status(`Settings save failed: ${e.message}`, true);
+    }
+  }, 400);
+}
+
+async function loadTrackedSpells() {
+  try {
+    const data = await api("/api/tracked_spells");
+    TRACKED_SPELLS = data.spells;
+  } catch (e) {
+    status(`Couldn't load tracked spells: ${e.message}`, true);
+    TRACKED_SPELLS = [];
+  }
+}
+
+function renderSpellFilter() {
+  const container = $("spell-filter-list");
+  if (TRACKED_SPELLS.length === 0) {
+    container.innerHTML = `<small class="muted">No tracked spells loaded.</small>`;
+    return;
+  }
+  // Group by (class, spec)
+  const groups = new Map();
+  for (const s of TRACKED_SPELLS) {
+    const key = `${s.wow_class}|${s.spec}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+  const html = [...groups.entries()]
+    .map(([key, spells]) => {
+      const [cls, spec] = key.split("|");
+      const rows = spells.map((s) => {
+        const checked = EXCLUDED_SPELL_IDS.has(s.spell_id) ? "" : "checked";
+        return `
+          <label class="spell-filter-row">
+            <input type="checkbox" class="spell-filter-cb"
+                   data-spell-id="${s.spell_id}" ${checked}>
+            <span>${s.label}</span>
+            <small class="muted">(${s.category})</small>
+          </label>`;
+      }).join("");
+      return `
+        <div class="spell-filter-group class-${cls.replace(/\s/g, "")}">
+          <h6 class="spell-filter-group-head">${cls} / ${spec}</h6>
+          <div class="spell-filter-group-rows">${rows}</div>
+        </div>`;
+    }).join("");
+  container.innerHTML = html;
+  container.querySelectorAll(".spell-filter-cb").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const id = parseInt(cb.dataset.spellId, 10);
+      if (cb.checked) EXCLUDED_SPELL_IDS.delete(id);
+      else EXCLUDED_SPELL_IDS.add(id);
+      saveSettings();
+      // If a note is currently displayed, regenerate to reflect the filter.
+      if (CURRENT_NOTE) debouncedRegenerateNote();
+    });
+  });
+}
+
 // ---- Persistent roster (server-side, GET/PUT /api/roster) --------------
 // Server is single-user / LAN-only, so it's safe to overwrite the whole
 // document on each save. Saves are debounced to avoid hammering on
@@ -799,18 +883,51 @@ async function fetchAndRenderNote(style) {
   if (!CURRENT_NOTE) return;
   $("note-output").value = "Loading…";
   const overrides = Object.fromEntries(LOG_OVERRIDES);
+  const excluded = [...EXCLUDED_SPELL_IDS];
   try {
     const data = await api("/api/note", {
       method: "POST",
-      body: JSON.stringify({ ...CURRENT_NOTE, style, name_overrides: overrides }),
+      body: JSON.stringify({
+        ...CURRENT_NOTE, style,
+        name_overrides: overrides,
+        excluded_spell_ids: excluded,
+      }),
     });
     $("note-meta").textContent =
       `${fmtMmss(data.duration_ms)} · ${data.report_code}#fight=${data.fight_id}`;
     $("note-output").value = data.note_text;
+    renderNotePreview(data.timeline);
   } catch (e) {
     $("note-output").value = "";
     status(`Note failed: ${e.message}`, true);
   }
+}
+
+function renderNotePreview(timeline) {
+  const container = $("note-preview");
+  if (!timeline || timeline.length === 0) {
+    container.innerHTML = `<small class="muted">No cooldowns to preview.</small>`;
+    return;
+  }
+  container.innerHTML = timeline.map((ev) => {
+    const color = CLASS_COLORS_HEX[ev.healer_class] || "#ffffff";
+    return `
+      <div class="preview-line">
+        <span class="preview-time">${fmtMmss(ev.time_ms)}</span>
+        <span class="preview-name" style="color: ${color}">${ev.healer_name}</span>
+        <span class="preview-spell">${ev.spell_label}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function activateNoteSubtab(name) {
+  document.querySelectorAll(".subtab-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.subtab === name);
+  });
+  document.querySelectorAll(".subtab-panel").forEach((p) => {
+    p.hidden = p.dataset.subtabPanel !== name;
+  });
 }
 
 async function copyNote() {
@@ -827,9 +944,13 @@ async function copyNote() {
 
 // ---- Boot ---------------------------------------------------------------
 async function boot() {
-  // Tabs
+  // Tabs (top-level Search / Settings)
   document.querySelectorAll(".tab-btn").forEach((b) =>
     b.addEventListener("click", () => activateTab(b.dataset.tab))
+  );
+  // Sub-tabs inside the Note panel (Note / Preview)
+  document.querySelectorAll(".subtab-btn").forEach((b) =>
+    b.addEventListener("click", () => activateNoteSubtab(b.dataset.subtab))
   );
 
   // Search tab
@@ -881,6 +1002,11 @@ async function boot() {
       (async () => {
         ROSTER = await loadRosterFromServer();
         renderRoster();
+      })(),
+      (async () => {
+        await loadTrackedSpells();
+        await loadSettingsFromServer();
+        renderSpellFilter();
       })(),
     ]);
   } catch (e) {
