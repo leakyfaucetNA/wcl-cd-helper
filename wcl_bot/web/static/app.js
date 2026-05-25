@@ -469,64 +469,82 @@ const CLASS_COLORS_HEX = {
   "Warlock": "#8788ee",
   "Warrior": "#c69b6d",
 };
+const ALL_CLASSES = Object.keys(CLASS_COLORS_HEX).sort();
 
-// Roster matches available for this log healer. Only same-spec matches
-// are surfaced — for classes with multiple healing specs (Priest), the
-// wrong-spec roster members are intentionally hidden so they can't be
-// mis-assigned.
-function rosterOptionsFor(h) {
-  return ROSTER.filter(
-    (m) => m.wow_class === h.wow_class && m.specs.includes(h.spec)
-  );
+// Roster matches available for this player. Healers (with spec) get
+// same-spec matches only so Priests don't get cross-mapped onto a Disc.
+// Raid-CD players (no spec) match by class only.
+function rosterOptionsFor(p) {
+  if (p.spec) {
+    return ROSTER.filter(
+      (m) => m.wow_class === p.wow_class && m.specs.includes(p.spec)
+    );
+  }
+  return ROSTER.filter((m) => m.wow_class === p.wow_class);
 }
 
-function renderNoteRemap(healers) {
+function _remapCellHtml(p) {
+  const opts = rosterOptionsFor(p);
+  const currentOverride = LOG_OVERRIDES.get(p.name);
+  const currentClass = LOG_CLASS_OVERRIDES.get(p.name);
+  const color = CLASS_COLORS_HEX[p.wow_class] || "";
+  const mkOpt = (m) => {
+    const sel = currentOverride === m.name ? "selected" : "";
+    return `<option value="roster:${m.name}" style="color: ${color}" ${sel}>${m.name}</option>`;
+  };
+  const keepSel = currentOverride === undefined || currentOverride === p.name ? "selected" : "";
+  // Healer rows offer healing classes for substitution (purpose-matched
+  // healer spells); raid-CD rows offer every class (raid CDs cut across
+  // both healer and non-healer classes).
+  const classChoices = p.spec ? CLASSES_WITH_HEALERS : ALL_CLASSES;
+  const classOpts = classChoices.map(
+    (c) => `<option value="${c}" style="color: ${CLASS_COLORS_HEX[c] || ''}" ${currentClass === c ? "selected" : ""}>${c}</option>`
+  ).join("");
+  const classOverrideChecked = currentClass ? "checked" : "";
+  const specLabel = p.spec ? `<small class="muted">(${p.spec})</small>` : "";
+  return `
+    <div class="remap-cell class-${p.wow_class.replace(/\s+/g, '')}">
+      <div class="remap-cell-head">
+        <span class="remap-name">${p.name}</span>
+        ${specLabel}
+      </div>
+      <div class="remap-cell-arrow">&darr;</div>
+      <select class="remap-select" data-wcl-name="${p.name}">
+        <option value="keep" ${keepSel}>(keep ${p.name})</option>
+        ${opts.length ? `<optgroup label="Roster">${opts.map(mkOpt).join("")}</optgroup>` : ""}
+        <option value="manual">Manual...</option>
+      </select>
+      <div class="remap-manual-block" data-wcl-name="${p.name}" hidden>
+        <input type="text" class="remap-manual-input" data-wcl-name="${p.name}"
+               placeholder="Custom name" value="${currentOverride && !ROSTER.some((m) => m.name === currentOverride) ? currentOverride : ""}">
+        <label class="remap-class-toggle">
+          <input type="checkbox" class="remap-class-cb" data-wcl-name="${p.name}" ${classOverrideChecked}>
+          Class Override
+        </label>
+        <select class="remap-class-select" data-wcl-name="${p.name}" ${currentClass ? "" : "hidden"}>
+          ${classOpts}
+        </select>
+      </div>
+    </div>
+  `;
+}
+
+function renderNoteRemap(healers, raidCdPlayers) {
   const container = $("note-remap");
-  if (!healers || healers.length === 0) {
-    container.innerHTML = `<small class="muted">No healers to remap.</small>`;
+  const hasHealers = healers && healers.length > 0;
+  const hasRaid = raidCdPlayers && raidCdPlayers.length > 0;
+  if (!hasHealers && !hasRaid) {
+    container.innerHTML = `<small class="muted">No players to remap.</small>`;
     return;
   }
-  container.innerHTML = healers.map((h, i) => {
-    const opts = rosterOptionsFor(h);
-    const currentOverride = LOG_OVERRIDES.get(h.name);
-    const currentClass = LOG_CLASS_OVERRIDES.get(h.name);
-    const color = CLASS_COLORS_HEX[h.wow_class] || "";
-    const mkOpt = (m) => {
-      const sel = currentOverride === m.name ? "selected" : "";
-      return `<option value="roster:${m.name}" style="color: ${color}" ${sel}>${m.name}</option>`;
-    };
-    const keepSel = currentOverride === undefined || currentOverride === h.name ? "selected" : "";
-    // Class dropdown options (any tracked healer class).
-    const classOpts = CLASSES_WITH_HEALERS.map(
-      (c) => `<option value="${c}" style="color: ${CLASS_COLORS_HEX[c] || ''}" ${currentClass === c ? "selected" : ""}>${c}</option>`
-    ).join("");
-    const classOverrideChecked = currentClass ? "checked" : "";
-    return `
-      <div class="remap-cell class-${h.wow_class}" data-idx="${i}">
-        <div class="remap-cell-head">
-          <span class="remap-name">${h.name}</span>
-          <small class="muted">(${h.spec})</small>
-        </div>
-        <div class="remap-cell-arrow">&darr;</div>
-        <select class="remap-select" data-wcl-name="${h.name}">
-          <option value="keep" ${keepSel}>(keep ${h.name})</option>
-          ${opts.length ? `<optgroup label="Roster">${opts.map(mkOpt).join("")}</optgroup>` : ""}
-          <option value="manual">Manual...</option>
-        </select>
-        <div class="remap-manual-block" data-wcl-name="${h.name}" hidden>
-          <input type="text" class="remap-manual-input" data-wcl-name="${h.name}"
-                 placeholder="Custom name" value="${currentOverride && !ROSTER.some((m) => m.name === currentOverride) ? currentOverride : ""}">
-          <label class="remap-class-toggle">
-            <input type="checkbox" class="remap-class-cb" data-wcl-name="${h.name}" ${classOverrideChecked}>
-            Class Override
-          </label>
-          <select class="remap-class-select" data-wcl-name="${h.name}" ${currentClass ? "" : "hidden"}>
-            ${classOpts}
-          </select>
-        </div>
-      </div>
-    `;
-  }).join("");
+  const healerGrid = hasHealers
+    ? `<div class="remap-grid">${healers.map(_remapCellHtml).join("")}</div>`
+    : "";
+  const raidGrid = hasRaid
+    ? `<div class="remap-section-label">Raid CDs</div>
+       <div class="remap-grid">${raidCdPlayers.map(_remapCellHtml).join("")}</div>`
+    : "";
+  container.innerHTML = healerGrid + raidGrid;
 
   container.querySelectorAll(".remap-select").forEach((sel) => {
     // If the current override doesn't match any select option, or if a class
@@ -1052,12 +1070,18 @@ function renderLogDetail(container, data) {
 // ---- Note ---------------------------------------------------------------
 let CURRENT_NOTE = null;   // {report_code, fight_id}
 let CURRENT_HEALERS = null; // [{name, wow_class, spec, rank_percent}] from log_detail
+// Non-healer players whose raid CDs appear in the latest timeline. Populated
+// from the /api/note response on each fetch. Used to drive a second remap
+// section so DPS/tanks can be renamed / class-overridden too.
+let CURRENT_RAID_CD_PLAYERS = [];
 
 async function loadNote(reportCode, fightId) {
   CURRENT_NOTE = { report_code: reportCode, fight_id: fightId };
   // New log → fresh class overrides (name overrides are reset by
-  // autoAssignFromRoster below).
+  // autoAssignFromRoster below) + reset raid CD players so a stale set
+  // isn't briefly visible while the new note loads.
   LOG_CLASS_OVERRIDES.clear();
+  CURRENT_RAID_CD_PLAYERS = [];
   try {
     const detail = await api("/api/log_detail", {
       method: "POST",
@@ -1075,11 +1099,18 @@ async function loadNote(reportCode, fightId) {
   } else {
     LOG_OVERRIDES.clear();
   }
-  renderNoteRemap(CURRENT_HEALERS);
+  renderNoteRemap(CURRENT_HEALERS, CURRENT_RAID_CD_PLAYERS);
   await fetchAndRenderNote($("style-select").value);
   const panel = $("note-panel");
   panel.hidden = false;
   panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function sameRaidCdSet(a, b) {
+  if (a.length !== b.length) return false;
+  const key = (p) => `${p.name} ${p.wow_class}`;
+  const aKeys = new Set(a.map(key));
+  return b.every((p) => aKeys.has(key(p)));
 }
 
 async function fetchAndRenderNote(style) {
@@ -1102,6 +1133,14 @@ async function fetchAndRenderNote(style) {
       `${fmtMmss(data.duration_ms)} · ${data.report_code}#fight=${data.fight_id}`;
     $("note-output").value = data.note_text;
     renderNotePreview(data.timeline);
+    // Re-render the remap UI only if the raid-CD player set actually
+    // changed — avoids blowing away input focus while the user is typing
+    // (every keystroke debounces a note fetch).
+    const newRaidCd = data.raid_cd_players || [];
+    if (!sameRaidCdSet(CURRENT_RAID_CD_PLAYERS, newRaidCd)) {
+      CURRENT_RAID_CD_PLAYERS = newRaidCd;
+      renderNoteRemap(CURRENT_HEALERS, CURRENT_RAID_CD_PLAYERS);
+    }
   } catch (e) {
     $("note-output").value = "";
     status(`Note failed: ${e.message}`, true);

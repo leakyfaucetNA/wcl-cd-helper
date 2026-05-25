@@ -51,6 +51,7 @@ from wcl_bot.web.models import (
     SettingsPayload,
     TrackedSpell,
     TrackedSpellsResponse,
+    NotePlayer,
     TimelineEntry,
     ZoneRef,
     ZonesResponse,
@@ -720,6 +721,20 @@ async def note(request: Request, payload: NoteRequest) -> NoteResponse:
                 spell_id=spell_id,
             )
         )
+    # Non-healer players whose CDs actually appeared in the (filtered)
+    # timeline — frontend uses this to render extra remap rows for them.
+    # Use WCL names + original classes, regardless of any class override the
+    # user already applied (otherwise the row would point at the wrong key).
+    healer_names = {h.name for h in fc.kill.healers}
+    seen: set[str] = set()
+    raid_cd_players: list[NotePlayer] = []
+    for ev in fc.events:
+        name = ev.healer.name
+        if name in healer_names or name in seen:
+            continue
+        seen.add(name)
+        raid_cd_players.append(NotePlayer(name=name, wow_class=ev.healer.wow_class))
+
     return NoteResponse(
         report_code=fc.kill.ranking.report_code,
         fight_id=fc.kill.ranking.fight_id,
@@ -730,4 +745,5 @@ async def note(request: Request, payload: NoteRequest) -> NoteResponse:
         ],
         note_text=note_text,
         timeline=timeline,
+        raid_cd_players=raid_cd_players,
     )

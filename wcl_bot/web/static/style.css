@@ -138,13 +138,21 @@ fieldset label > small.muted {
   letter-spacing: 0.05em;
   color: var(--pico-muted-color);
 }
-#note-remap {
+#note-remap { margin: 0.75rem 0; }
+.remap-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 0.75rem;
-  margin: 0.75rem 0;
 }
-@media (max-width: 700px) { #note-remap { grid-template-columns: 1fr; } }
+.remap-grid + .remap-section-label { margin-top: 0.75rem; }
+.remap-section-label {
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--pico-muted-color);
+  margin: 0 0 0.4rem;
+}
+@media (max-width: 700px) { .remap-grid { grid-template-columns: 1fr; } }
 
 .remap-cell {
   border: 1px solid var(--pico-card-border-color);

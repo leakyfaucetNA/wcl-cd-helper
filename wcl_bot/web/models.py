@@ -110,6 +110,12 @@ class TimelineEntry(BaseModel):
     spell_id: int                    # actual cast id
 
 
+class NotePlayer(BaseModel):
+    """One player whose cooldowns appear in the note's timeline."""
+    name: str
+    wow_class: str
+
+
 class NoteResponse(BaseModel):
     report_code: str
     fight_id: int
@@ -118,6 +124,10 @@ class NoteResponse(BaseModel):
     healers: list[str]               # display strings like "Mâvêr (Druid/Restoration)"
     note_text: str                   # the {time:...} formatted note
     timeline: list[TimelineEntry]    # structured equivalent for UI rendering
+    # Non-healer players whose tracked raid CDs (Rallying Cry, AMZ, etc.)
+    # appear in this fight's timeline. UI uses this to extend the remap
+    # panel so DPS/tanks can also be renamed / class-overridden.
+    raid_cd_players: list[NotePlayer] = Field(default_factory=list)
 
 
 class HealerSpecRef(BaseModel):
