@@ -209,12 +209,13 @@ def _extract_fight_id(s: str) -> int | None:
 def _normalize_realm_slug(name: str) -> str:
     """'Bleeding Hollow' / 'bleeding hollow' / 'Mal'Ganis' -> WCL slug form.
 
-    Lowercase, collapse runs of non-alphanumeric chars to single hyphens,
-    strip leading/trailing hyphens. Matches WCL's URL convention.
+    Casefold, collapse runs of non-letter/non-digit chars to single hyphens,
+    strip leading/trailing hyphens. Unicode-aware so CN/KR/RU realm names
+    (e.g. '主宰之剑') survive — WCL accepts the native-script form as the slug.
     """
-    s = name.lower().strip()
-    s = re.sub(r"[^a-z0-9]+", "-", s)
-    s = re.sub(r"-+", "-", s).strip("-")
+    s = name.casefold().strip()
+    # `[\W_]+` = anything that's not a unicode letter or digit (also drops `_`).
+    s = re.sub(r"[\W_]+", "-", s, flags=re.UNICODE).strip("-")
     return s
 
 
@@ -560,52 +561,29 @@ async def _fetch_per_healer_metrics(
     """For one (report, fight), pull per-healer Parse %, HPS, active-time %.
     Returns {player_name: {"parse_percent"?, "hps"?, "active_time_pct"?}}.
 
-    Parse % is THIS fight's actual percentile (matches WCL's healing-tab
-    "Parse" column). Sourced by fanning out to each healer's
-    characterData.character.encounterRankings and locating the rank entry
-    whose report.code matches this report — report.rankings(fightIDs)
-    only exposes character-aggregate stats, not per-fight values.
+    Parse % comes from report.rankings(playerMetric: hps), which gives the
+    per-fight HPS percentile WCL shows in the healing tab. Works for CN/KR
+    logs too — the per-character encounterRankings fallback we used to do
+    doesn't (CN characters aren't indexed on the global API).
     """
     out: dict[str, dict] = {}
-    healer_info: dict[str, dict] = {}    # name -> {server_slug, server_region}
-    encounter_id: int | None = None
 
-    # 1. Report rankings — fast (one cached call). Extract encounter id and
-    # per-healer (name, server, region) so we can fan out to char rankings.
+    # 1. report.rankings → per-healer Parse %. One cached call.
     try:
         rank_data = await client.execute(
             queries.GET_REPORT_FIGHT_RANKINGS,
             {"code": report_code, "fightID": fight_id},
             cache_ttl_seconds=CACHE_TTL_STATIC,
         )
-        for name, info in _extract_healer_server_info(
+        for name, pct in _extract_healer_rank_percents(
             rank_data.get("reportData", {}).get("report", {}).get("rankings")
         ).items():
-            healer_info[name] = info
-        encounter_id = _extract_encounter_id(
-            rank_data.get("reportData", {}).get("report", {}).get("rankings")
-        )
+            if pct is not None:
+                out.setdefault(name, {})["parse_percent"] = pct
     except (WCLError, KeyError) as exc:
         log.warning("rankings fetch failed for %s#%d: %s", report_code, fight_id, exc)
 
-    # 2. Per-healer character rankings — one call each. Gives this-fight Parse %.
-    if encounter_id is not None and healer_info:
-        sem = asyncio.Semaphore(10)
-        async def one_parse(name, info):
-            async with sem:
-                pct = await _fetch_char_fight_parse(
-                    client, name, info["server_slug"], info["server_region"],
-                    encounter_id, report_code, fight_id,
-                )
-            return name, pct
-        results = await asyncio.gather(
-            *(one_parse(n, i) for n, i in healer_info.items())
-        )
-        for name, pct in results:
-            if pct is not None:
-                out.setdefault(name, {})["parse_percent"] = pct
-
-    # 3. Healing table → activeTime + total healing (HPS). One cached call.
+    # 2. Healing table → activeTime + total healing (HPS). One cached call.
     try:
         tbl_data = await client.execute(
             queries.GET_HEALING_TABLE,
@@ -630,13 +608,14 @@ async def _fetch_per_healer_metrics(
     return out
 
 
-def _extract_healer_server_info(blob) -> dict[str, dict]:
-    """From the report rankings blob, pull {name: {server_slug, server_region}}
-    for every healer entry."""
+def _extract_healer_rank_percents(blob) -> dict[str, float | None]:
+    """From the report.rankings blob, pull {name: rankPercent} for every
+    healer entry. We use the unbracketed rankPercent because that's what
+    WCL's healing-tab "Parse" column shows by default."""
     if not isinstance(blob, dict):
         return {}
     entries = blob.get("data") or [blob]
-    out: dict[str, dict] = {}
+    out: dict[str, float | None] = {}
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -645,77 +624,10 @@ def _extract_healer_server_info(blob) -> dict[str, dict]:
             if not isinstance(c, dict):
                 continue
             name = c.get("name")
-            server = c.get("server") or {}
             if not name:
                 continue
-            out[name] = {
-                "server_slug": _normalize_realm_slug(server.get("name", "")),
-                "server_region": str(server.get("region", "")).upper(),
-            }
+            out[name] = c.get("rankPercent")
     return out
-
-
-def _extract_encounter_id(blob) -> int | None:
-    """Encounter ID lives under data[0].encounter.id in the rankings blob."""
-    if not isinstance(blob, dict):
-        return None
-    entries = blob.get("data") or [blob]
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        enc = entry.get("encounter") or {}
-        eid = enc.get("id")
-        if isinstance(eid, int):
-            return eid
-    return None
-
-
-async def _fetch_char_fight_parse(
-    client, char_name: str, server_slug: str, server_region: str,
-    encounter_id: int, report_code: str, fight_id: int,
-) -> float | None:
-    """Pull the character's encounterRankings list and locate the parse
-    matching (report_code [, fight_id]). Return its per-fight percentile —
-    prefer bracketPercent (ilvl-filtered, matches WCL's headline Parse %)
-    then rankPercent. None if the character or matching parse isn't found.
-    """
-    if not (char_name and server_slug and server_region):
-        return None
-    try:
-        data = await client.execute(
-            queries.GET_CHARACTER_ENCOUNTER_RANKINGS,
-            {
-                "name": char_name,
-                "serverSlug": server_slug,
-                "serverRegion": server_region,
-                "encounterID": encounter_id,
-                # WCL defaults to "dps" — we always want healing percentiles.
-                "metric": "hps",
-            },
-            cache_ttl_seconds=CACHE_TTL_STATIC,
-        )
-    except WCLError as exc:
-        log.warning("char rankings failed for %s (%s-%s): %s",
-                    char_name, server_slug, server_region, exc)
-        return None
-    char = (data.get("characterData") or {}).get("character")
-    if not isinstance(char, dict):
-        return None
-    blob = char.get("encounterRankings")
-    if not isinstance(blob, dict):
-        return None
-    ranks = blob.get("ranks") or []
-    for r in ranks:
-        if not isinstance(r, dict):
-            continue
-        rep = r.get("report") or {}
-        if rep.get("code") != report_code:
-            continue
-        # Some shapes also expose fightID per rank — match when present.
-        if rep.get("fightID") is not None and rep.get("fightID") != fight_id:
-            continue
-        return r.get("bracketPercent") or r.get("rankPercent")
-    return None
 
 
 def _extract_healing_table_data(blob) -> dict[str, dict[str, float]]:
