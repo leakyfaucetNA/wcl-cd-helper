@@ -131,16 +131,7 @@ CLASS_RAID_COOLDOWNS: dict[str, tuple[CooldownSpell, ...]] = {
     "Rogue": (
         CooldownSpell(76577, "Smoke Bomb", "raid", purpose=PURPOSE_RAID_DR),
     ),
-    "Shaman": (
-        # Heroism (32182) is the Horde variant; alias so either cast counts.
-        CooldownSpell(
-            2825, "Bloodlust", "raid",
-            purpose=PURPOSE_UTILITY,
-            aliases=(32182,), display_name="Bloodlust / Heroism",
-        ),
-    ),
     "Evoker": (
-        CooldownSpell(390386, "Fury of the Aspects", "raid", purpose=PURPOSE_UTILITY),
         CooldownSpell(374227, "Zephyr", "raid", purpose=PURPOSE_RAID_DR),
     ),
 }

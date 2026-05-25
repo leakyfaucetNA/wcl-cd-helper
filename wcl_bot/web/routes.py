@@ -676,15 +676,38 @@ async def note(request: Request, payload: NoteRequest) -> NoteResponse:
     except WCLError as exc:
         raise HTTPException(status_code=502, detail=f"WCL: {exc}") from exc
 
-    # Apply the spell-exclusion filter once and use the trimmed FightCooldowns
-    # for both note formatting AND the returned timeline — keeps the textarea,
-    # preview, and any other downstream view consistent.
+    # Two-stage filter: spell exclusion first (settings-level), then per-player
+    # ignore. We capture raid_cd_players after the spell filter but BEFORE the
+    # ignore filter so an ignored player still appears in the UI's remap
+    # section — otherwise toggling Ignore would make the row vanish and the
+    # user couldn't un-ignore them. Settings-level spell exclusion does drop
+    # the row (because the player has no tracked casts left to remap).
+    from dataclasses import replace
     excluded = set(payload.excluded_spell_ids)
     if excluded:
-        from dataclasses import replace
         fc = replace(
             fc,
             events=[ev for ev in fc.events if ev.cast_spell_id not in excluded],
+        )
+
+    # Compute raid_cd_players from the spell-filtered events (pre-ignore).
+    healer_names = {h.name for h in fc.kill.healers}
+    seen: set[str] = set()
+    raid_cd_players: list[NotePlayer] = []
+    for ev in fc.events:
+        name = ev.healer.name
+        if name in healer_names or name in seen:
+            continue
+        seen.add(name)
+        raid_cd_players.append(NotePlayer(name=name, wow_class=ev.healer.wow_class))
+
+    # Now apply the per-player ignore filter — note text and timeline omit
+    # ignored players' casts entirely.
+    ignored_names = set(payload.ignored_player_names)
+    if ignored_names:
+        fc = replace(
+            fc,
+            events=[ev for ev in fc.events if ev.healer.name not in ignored_names],
         )
 
     style = NoteStyle(payload.style)
@@ -721,20 +744,6 @@ async def note(request: Request, payload: NoteRequest) -> NoteResponse:
                 spell_id=spell_id,
             )
         )
-    # Non-healer players whose CDs actually appeared in the (filtered)
-    # timeline — frontend uses this to render extra remap rows for them.
-    # Use WCL names + original classes, regardless of any class override the
-    # user already applied (otherwise the row would point at the wrong key).
-    healer_names = {h.name for h in fc.kill.healers}
-    seen: set[str] = set()
-    raid_cd_players: list[NotePlayer] = []
-    for ev in fc.events:
-        name = ev.healer.name
-        if name in healer_names or name in seen:
-            continue
-        seen.add(name)
-        raid_cd_players.append(NotePlayer(name=name, wow_class=ev.healer.wow_class))
-
     return NoteResponse(
         report_code=fc.kill.ranking.report_code,
         fight_id=fc.kill.ranking.fight_id,

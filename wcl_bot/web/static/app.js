@@ -52,6 +52,10 @@ const LOG_OVERRIDES = new Map();
 // Per-log class overrides (Manual mode only). WCL player name → target class.
 // Used to rewrite the player's spells as the target class's equivalents.
 const LOG_CLASS_OVERRIDES = new Map();
+// Per-log ignored players: every cast by a name in this set is dropped from
+// the note + timeline. Surfaced as the "Ignore" option in the raid-CD remap
+// dropdown so a single DPS can be silenced without disabling their spell.
+const LOG_IGNORED_PLAYERS = new Set();
 
 // Persistent settings (server-side). Two-list model:
 //   EXCLUDED_SPELL_IDS  — default-included spells (healer CDs) the user disabled
@@ -483,16 +487,17 @@ function rosterOptionsFor(p) {
   return ROSTER.filter((m) => m.wow_class === p.wow_class);
 }
 
-function _remapCellHtml(p) {
+function _remapCellHtml(p, { allowIgnore = false } = {}) {
   const opts = rosterOptionsFor(p);
   const currentOverride = LOG_OVERRIDES.get(p.name);
   const currentClass = LOG_CLASS_OVERRIDES.get(p.name);
+  const ignored = LOG_IGNORED_PLAYERS.has(p.name);
   const color = CLASS_COLORS_HEX[p.wow_class] || "";
   const mkOpt = (m) => {
-    const sel = currentOverride === m.name ? "selected" : "";
+    const sel = !ignored && currentOverride === m.name ? "selected" : "";
     return `<option value="roster:${m.name}" style="color: ${color}" ${sel}>${m.name}</option>`;
   };
-  const keepSel = currentOverride === undefined || currentOverride === p.name ? "selected" : "";
+  const keepSel = !ignored && (currentOverride === undefined || currentOverride === p.name) ? "selected" : "";
   // Healer rows offer healing classes for substitution (purpose-matched
   // healer spells); raid-CD rows offer every class (raid CDs cut across
   // both healer and non-healer classes).
@@ -502,6 +507,9 @@ function _remapCellHtml(p) {
   ).join("");
   const classOverrideChecked = currentClass ? "checked" : "";
   const specLabel = p.spec ? `<small class="muted">(${p.spec})</small>` : "";
+  const ignoreOpt = allowIgnore
+    ? `<option value="ignore" ${ignored ? "selected" : ""}>Ignore (drop casts)</option>`
+    : "";
   return `
     <div class="remap-cell class-${p.wow_class.replace(/\s+/g, '')}">
       <div class="remap-cell-head">
@@ -513,6 +521,7 @@ function _remapCellHtml(p) {
         <option value="keep" ${keepSel}>(keep ${p.name})</option>
         ${opts.length ? `<optgroup label="Roster">${opts.map(mkOpt).join("")}</optgroup>` : ""}
         <option value="manual">Manual...</option>
+        ${ignoreOpt}
       </select>
       <div class="remap-manual-block" data-wcl-name="${p.name}" hidden>
         <input type="text" class="remap-manual-input" data-wcl-name="${p.name}"
@@ -538,25 +547,29 @@ function renderNoteRemap(healers, raidCdPlayers) {
     return;
   }
   const healerGrid = hasHealers
-    ? `<div class="remap-grid">${healers.map(_remapCellHtml).join("")}</div>`
+    ? `<div class="remap-grid">${healers.map((p) => _remapCellHtml(p)).join("")}</div>`
     : "";
   const raidGrid = hasRaid
     ? `<div class="remap-section-label">Raid CDs</div>
-       <div class="remap-grid">${raidCdPlayers.map(_remapCellHtml).join("")}</div>`
+       <div class="remap-grid">${raidCdPlayers.map((p) => _remapCellHtml(p, { allowIgnore: true })).join("")}</div>`
     : "";
   container.innerHTML = healerGrid + raidGrid;
 
   container.querySelectorAll(".remap-select").forEach((sel) => {
     // If the current override doesn't match any select option, or if a class
-    // override is set for this healer, switch to manual mode so the panel shows.
+    // override is set for this healer, switch to manual mode so the panel
+    // shows. Ignored players already have their select pre-selected to
+    // "ignore" by the template, so skip the manual-mode promotion for them.
     const wclName = sel.dataset.wclName;
-    const cur = LOG_OVERRIDES.get(wclName);
-    const hasClassOverride = LOG_CLASS_OVERRIDES.has(wclName);
-    const customName = cur !== undefined && cur !== wclName && !ROSTER.some((m) => m.name === cur);
-    if (customName || hasClassOverride) {
-      sel.value = "manual";
-      const block = sel.closest(".remap-cell").querySelector(".remap-manual-block");
-      if (block) block.hidden = false;
+    if (!LOG_IGNORED_PLAYERS.has(wclName)) {
+      const cur = LOG_OVERRIDES.get(wclName);
+      const hasClassOverride = LOG_CLASS_OVERRIDES.has(wclName);
+      const customName = cur !== undefined && cur !== wclName && !ROSTER.some((m) => m.name === cur);
+      if (customName || hasClassOverride) {
+        sel.value = "manual";
+        const block = sel.closest(".remap-cell").querySelector(".remap-manual-block");
+        if (block) block.hidden = false;
+      }
     }
     sel.addEventListener("change", () => onRemapChange(sel));
   });
@@ -597,15 +610,21 @@ function onRemapChange(sel) {
   const wclName = sel.dataset.wclName;
   const block = sel.closest(".remap-cell").querySelector(".remap-manual-block");
   const manualInput = block.querySelector(".remap-manual-input");
-  if (sel.value === "keep") {
-    LOG_OVERRIDES.delete(wclName);
-    LOG_CLASS_OVERRIDES.delete(wclName);
+  const collapseBlock = () => {
     block.hidden = true;
     manualInput.value = "";
     const cb = block.querySelector(".remap-class-cb");
     const classSel = block.querySelector(".remap-class-select");
     if (cb) cb.checked = false;
     if (classSel) classSel.hidden = true;
+  };
+  // Anything other than "ignore" means the player should appear in the note
+  // — clear any prior ignore flag.
+  if (sel.value !== "ignore") LOG_IGNORED_PLAYERS.delete(wclName);
+  if (sel.value === "keep") {
+    LOG_OVERRIDES.delete(wclName);
+    LOG_CLASS_OVERRIDES.delete(wclName);
+    collapseBlock();
   } else if (sel.value === "manual") {
     block.hidden = false;
     manualInput.focus();
@@ -614,12 +633,12 @@ function onRemapChange(sel) {
     const rosterName = sel.value.slice("roster:".length);
     LOG_OVERRIDES.set(wclName, rosterName);
     LOG_CLASS_OVERRIDES.delete(wclName);
-    block.hidden = true;
-    manualInput.value = "";
-    const cb = block.querySelector(".remap-class-cb");
-    const classSel = block.querySelector(".remap-class-select");
-    if (cb) cb.checked = false;
-    if (classSel) classSel.hidden = true;
+    collapseBlock();
+  } else if (sel.value === "ignore") {
+    LOG_IGNORED_PLAYERS.add(wclName);
+    LOG_OVERRIDES.delete(wclName);
+    LOG_CLASS_OVERRIDES.delete(wclName);
+    collapseBlock();
   }
   debouncedRegenerateNote();
 }
@@ -1077,10 +1096,11 @@ let CURRENT_RAID_CD_PLAYERS = [];
 
 async function loadNote(reportCode, fightId) {
   CURRENT_NOTE = { report_code: reportCode, fight_id: fightId };
-  // New log → fresh class overrides (name overrides are reset by
-  // autoAssignFromRoster below) + reset raid CD players so a stale set
-  // isn't briefly visible while the new note loads.
+  // New log → fresh class overrides + ignore list (name overrides are
+  // reset by autoAssignFromRoster below) + reset raid CD players so a
+  // stale set isn't briefly visible while the new note loads.
   LOG_CLASS_OVERRIDES.clear();
+  LOG_IGNORED_PLAYERS.clear();
   CURRENT_RAID_CD_PLAYERS = [];
   try {
     const detail = await api("/api/log_detail", {
@@ -1127,6 +1147,7 @@ async function fetchAndRenderNote(style) {
         name_overrides: overrides,
         class_overrides: classOverrides,
         excluded_spell_ids: excluded,
+        ignored_player_names: Array.from(LOG_IGNORED_PLAYERS),
       }),
     });
     $("note-meta").textContent =

@@ -79,6 +79,12 @@ class NoteRequest(BaseModel):
     # Spell IDs to omit from the generated note + returned timeline. Frontend
     # populates this from the persistent settings (excluded spells).
     excluded_spell_ids: list[int] = Field(default_factory=list)
+    # WCL player names to drop entirely from the note (every cast by this
+    # player is filtered out). Used by the "Ignore" option in the raid-CD
+    # remap dropdown to suppress a specific DPS without disabling their
+    # spell globally — e.g. drop one DK's AMZ without losing the spell
+    # for healers' AMZ-equivalents in other logs.
+    ignored_player_names: list[str] = Field(default_factory=list)
 
 
 class LogDetailRequest(BaseModel):
