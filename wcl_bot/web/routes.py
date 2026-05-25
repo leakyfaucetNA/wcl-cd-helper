@@ -503,6 +503,32 @@ async def _discover_with_client(client, payload, target_comp, filters) -> Discov
     return DiscoverResponse(server_filter=server_filter_display, matches=summaries)
 
 
+@router.get("/debug/rankings_raw")
+async def debug_rankings_raw(request: Request, code: str, fight_id: int):
+    """One-off diagnostic. Dumps the raw report.rankings + table responses
+    for a (report, fight) so we can pin down which field actually holds
+    the per-fight Parse % WCL shows in the log's healing tab."""
+    client = _client(request)
+    out: dict = {"code": code, "fight_id": fight_id}
+    try:
+        out["rankings"] = await client.execute(
+            queries.GET_REPORT_FIGHT_RANKINGS,
+            {"code": code, "fightID": fight_id},
+            cache_ttl_seconds=None,  # always fresh for debugging
+        )
+    except WCLError as exc:
+        out["rankings_error"] = str(exc)
+    try:
+        out["table"] = await client.execute(
+            queries.GET_HEALING_TABLE,
+            {"code": code, "fightID": fight_id},
+            cache_ttl_seconds=None,
+        )
+    except WCLError as exc:
+        out["table_error"] = str(exc)
+    return out
+
+
 @router.post("/log_detail", response_model=LogDetailResponse)
 async def log_detail(
     request: Request, payload: LogDetailRequest
