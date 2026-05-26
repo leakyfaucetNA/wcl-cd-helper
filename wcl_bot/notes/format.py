@@ -1,16 +1,21 @@
 """WoW raid note formatters: NSRT (Northern Sky Raid Tools) and MRT
 (Method Raid Tools) styles.
 
-Both styles share most of the syntax:
-    {time:MM:SS[,Label]} |cffXXXXXXName|r {spell:ID}
+The two formats are *completely different syntaxes*, not just stylistic
+variants. They share no per-line tokens.
 
-Differences worth noting:
-  - **Color table**: NSRT swaps Priest's pure-white #FFFFFF for #F0EBE0 so
-    names are readable on light note backgrounds. MRT uses the canonical
-    Blizzard class colors.
-  - **Time label**: MRT supports an optional comma-separated label in the
-    `{time:...}` token (used by other notes as a cross-reference anchor).
-    We emit the spell's display name as the label. NSRT omits the label.
+  - **MRT** (Method Raid Tools): WeakAuras-ish `{time:MM:SS[,Label]} ...`
+    with inline color codes and `{spell:ID}` references. One line per cast.
+    Example:
+        {time:01:23,Tranquility} |cffff7c0aMaver|r {spell:740}
+
+  - **NSRT** (Northern Sky Raid Tools): semicolon-separated key=value
+    pairs the addon parses with `line:match("tag:([^;]+)")` etc. Times
+    are seconds (decimal allowed), spell is `spellid:<id>`, players are
+    in `tag:<name1,name2>`. No color codes — NSRT colors per-class at
+    runtime from the player's class. One line per cast.
+    Example:
+        tag:Maver; time:83; spellid:740
 """
 from __future__ import annotations
 
@@ -20,7 +25,8 @@ from wcl_bot.cooldowns.extract import FightCooldowns
 from wcl_bot.cooldowns.spells import substitute_for
 
 
-# Canonical Blizzard class colors (ARGB hex, no leading #).
+# Canonical Blizzard class colors (ARGB hex, no leading #). MRT-only — NSRT
+# doesn't embed colors in note text.
 CLASS_COLORS_MRT: dict[str, str] = {
     "Death Knight": "C41E3A",
     "Demon Hunter": "A330C9",
@@ -36,9 +42,6 @@ CLASS_COLORS_MRT: dict[str, str] = {
     "Warlock": "8788EE",
     "Warrior": "C69B6D",
 }
-
-# NSRT uses the same colors except Priest (off-white for readability).
-CLASS_COLORS_NSRT: dict[str, str] = {**CLASS_COLORS_MRT, "Priest": "F0EBE0"}
 
 
 class NoteStyle(str, Enum):
@@ -58,10 +61,9 @@ def format_note(
     `name_overrides` maps WCL player names to display names.
     `class_overrides` maps WCL player names to a *target class*; events for
     that player are rewritten with the target class's equivalent spell (by
-    purpose) and their class color in the note. Events with no equivalent
-    in the target class are dropped.
+    purpose) in the note. Events with no equivalent in the target class
+    are dropped.
     """
-    colors = CLASS_COLORS_NSRT if style is NoteStyle.NSRT else CLASS_COLORS_MRT
     n_over = name_overrides or {}
     c_over = class_overrides or {}
     lines: list[str] = []
@@ -78,21 +80,28 @@ def format_note(
             spell_id = ev.cast_spell_id
             spell_label = ev.spell.label
             display_class = ev.healer.wow_class
-
-        mm, ss = divmod(ev.time_into_fight_ms // 1000, 60)
-        color = colors.get(display_class, "FFFFFF").lower()
-        time_token = _time_token(int(mm), int(ss), spell_label, style)
         name = n_over.get(ev.healer.name, ev.healer.name)
-        lines.append(
-            f"{time_token} |cff{color}{name}|r {{spell:{spell_id}}}"
-        )
+        time_s = ev.time_into_fight_ms // 1000
+        if style is NoteStyle.NSRT:
+            lines.append(_nsrt_line(name, int(time_s), spell_id))
+        else:
+            lines.append(_mrt_line(name, int(time_s), spell_id, spell_label, display_class))
     return "\n".join(lines)
 
 
-def _time_token(mm: int, ss: int, spell_label: str, style: NoteStyle) -> str:
-    if style is NoteStyle.MRT:
-        # MRT labels can't contain whitespace cleanly — collapse to camel-ish
-        # underscore form so the anchor name is parseable.
-        anchor = spell_label.replace(" / ", "_").replace(" ", "_")
-        return f"{{time:{mm:02d}:{ss:02d},{anchor}}}"
-    return f"{{time:{mm:02d}:{ss:02d}}}"
+def _nsrt_line(name: str, time_s: int, spell_id: int) -> str:
+    """One reminder line in NSRT's `key:value;` format. Order matches what
+    the addon's `BuildFirstLine` exporter produces so it parses cleanly."""
+    return f"tag:{name}; time:{time_s}; spellid:{spell_id}"
+
+
+def _mrt_line(name: str, time_s: int, spell_id: int, spell_label: str, wow_class: str) -> str:
+    mm, ss = divmod(time_s, 60)
+    color = CLASS_COLORS_MRT.get(wow_class, "FFFFFF").lower()
+    # MRT label anchor can't contain whitespace cleanly — collapse to
+    # underscore form so other notes can `{time:...}` to it.
+    anchor = spell_label.replace(" / ", "_").replace(" ", "_")
+    return (
+        f"{{time:{mm:02d}:{ss:02d},{anchor}}} "
+        f"|cff{color}{name}|r {{spell:{spell_id}}}"
+    )

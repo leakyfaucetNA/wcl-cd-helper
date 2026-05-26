@@ -882,6 +882,72 @@ function percentileClass(p) {
   return "pct-0";
 }
 
+// Absolute-rank colour bands (smaller = better). Mirrors WCL's leaderboard
+// tinting — rank 1 gets the brightest, then top-10, top-100, top-1000, rest.
+function rankClass(rank) {
+  if (rank == null) return "";
+  if (rank === 1) return "pct-95";
+  if (rank <= 10) return "pct-75";
+  if (rank <= 100) return "pct-50";
+  if (rank <= 1000) return "pct-25";
+  return "pct-0";
+}
+
+// Wire sort behaviour onto a table's headers. Each <th> sorts the tbody by
+// its column on click; numeric ordering uses data-sort if present, otherwise
+// parseFloat of textContent (falls back to lexicographic). Headers tagged
+// with data-no-sort (e.g. blank "actions" columns) are skipped. Pass
+// `pairedRowSelector` to keep detail rows attached to their summary row
+// (used by results-table where each match-row is followed by a hidden
+// match-detail-row that must stay adjacent after sorting).
+function makeSortable(table, { pairedRowSelector } = {}) {
+  const headers = Array.from(table.tHead?.rows[0]?.cells || []);
+  const tbody = table.tBodies[0];
+  if (!tbody || headers.length === 0) return;
+  let state = { col: -1, dir: 1 };
+  const cellSortValue = (tr, col) => {
+    const td = tr.cells[col];
+    if (!td) return "";
+    if (td.dataset.sort !== undefined) return td.dataset.sort;
+    return td.textContent.trim();
+  };
+  headers.forEach((th, col) => {
+    if (th.dataset.noSort !== undefined || !th.textContent.trim()) return;
+    th.classList.add("sortable");
+    th.addEventListener("click", () => {
+      const dir = state.col === col ? -state.dir : 1;
+      state = { col, dir };
+      // Build [summary-row, optional detail-row] pairs so we don't tear them
+      // apart when sorting.
+      const allRows = Array.from(tbody.rows);
+      const pairs = [];
+      for (let i = 0; i < allRows.length; i++) {
+        const r = allRows[i];
+        if (pairedRowSelector && r.matches(pairedRowSelector)) continue;
+        const next = allRows[i + 1];
+        if (pairedRowSelector && next && next.matches(pairedRowSelector)) {
+          pairs.push([r, next]); i++;
+        } else {
+          pairs.push([r]);
+        }
+      }
+      pairs.sort(([a], [b]) => {
+        const av = cellSortValue(a, col);
+        const bv = cellSortValue(b, col);
+        const an = parseFloat(av), bn = parseFloat(bv);
+        const numeric = !isNaN(an) && !isNaN(bn);
+        const cmp = numeric ? (an - bn) : String(av).localeCompare(String(bv));
+        return cmp * dir;
+      });
+      headers.forEach((h) => h.classList.remove("sort-asc", "sort-desc"));
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      const frag = document.createDocumentFragment();
+      for (const pair of pairs) for (const r of pair) frag.appendChild(r);
+      tbody.appendChild(frag);
+    });
+  });
+}
+
 async function doDiscover(ev) {
   ev.preventDefault();
   const healers = selectedHealers();
@@ -961,27 +1027,34 @@ function renderResults(data, targetN, ctx = {}) {
 
   content.innerHTML = counts.map((hc) => {
     const rows = groups[hc].map((m) => {
-      const rank = m.guild_rank != null ? `#${m.guild_rank}` : "—";
+      const rank = m.guild_rank != null ? m.guild_rank : "—";
       const hps = m.total_hps != null ? fmtHps(m.total_hps) : "—";
       const rankPct = m.avg_rank_percent != null ? m.avg_rank_percent.toFixed(0) : "—";
       const avgAt  = m.avg_active_pct  != null ? m.avg_active_pct.toFixed(1) + "%" : "—";
       const minAt  = m.min_active_pct  != null ? m.min_active_pct.toFixed(1) + "%" : "—";
+      // data-sort: cells where the *displayed* string doesn't sort right.
+      // mm:ss → ms; formatted HPS (177.4k) → raw number; "—" → +Infinity so
+      // missing values sink to the bottom on ascending sort.
+      const sortRank = m.guild_rank != null ? m.guild_rank : Infinity;
+      const sortHps = m.total_hps != null ? m.total_hps : -Infinity;
+      const sortRankPct = m.avg_rank_percent != null ? m.avg_rank_percent : -Infinity;
+      const sortAvgAt = m.avg_active_pct != null ? m.avg_active_pct : -Infinity;
+      const sortMinAt = m.min_active_pct != null ? m.min_active_pct : -Infinity;
       return `
       <tr class="match-row" data-report="${m.report_code}" data-fight="${m.fight_id}" data-index="${m.index}">
-        <td class="num">${m.index}</td>
-        <td class="num">${rank}</td>
+        <td class="num ${rankClass(m.guild_rank)}" data-sort="${sortRank}">${rank}</td>
         <td>${m.guild ?? "?"}</td>
         <td>${m.region ?? "?"}</td>
-        <td class="num">${fmtMmss(m.duration_ms)}</td>
-        <td class="num">${hps}</td>
-        <td class="num ${percentileClass(m.avg_rank_percent)}">${rankPct}</td>
-        <td class="num ${activeClass(m.avg_active_pct)}">${avgAt}</td>
-        <td class="num ${activeClass(m.min_active_pct)}">${minAt}</td>
+        <td class="num" data-sort="${m.duration_ms}">${fmtMmss(m.duration_ms)}</td>
+        <td class="num" data-sort="${sortHps}">${hps}</td>
+        <td class="num ${percentileClass(m.avg_rank_percent)}" data-sort="${sortRankPct}">${rankPct}</td>
+        <td class="num ${activeClass(m.avg_active_pct)}" data-sort="${sortAvgAt}">${avgAt}</td>
+        <td class="num ${activeClass(m.min_active_pct)}" data-sort="${sortMinAt}">${minAt}</td>
         <td><a href="${m.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">WCL ↗</a></td>
         <td><button class="pick-btn outline" type="button">Generate note</button></td>
       </tr>
       <tr class="match-detail-row" data-for-index="${m.index}" hidden>
-        <td colspan="11"><div class="match-detail">Loading…</div></td>
+        <td colspan="10"><div class="match-detail">Loading…</div></td>
       </tr>`;
     }).join("");
 
@@ -997,7 +1070,6 @@ function renderResults(data, targetN, ctx = {}) {
         </summary>
         <table class="results-table">
           <thead><tr>
-            <th class="num">#</th>
             <th class="num">Rank</th>
             <th>Guild</th>
             <th>Region</th>
@@ -1006,13 +1078,17 @@ function renderResults(data, targetN, ctx = {}) {
             <th class="num">Rank %</th>
             <th class="num">Avg Active</th>
             <th class="num">Min Active</th>
-            <th></th><th></th>
+            <th data-no-sort></th><th data-no-sort></th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </details>
     `;
   }).join("");
+
+  content.querySelectorAll(".results-table").forEach((t) => {
+    makeSortable(t, { pairedRowSelector: ".match-detail-row" });
+  });
 
   content.querySelectorAll(".match-row").forEach((tr) => {
     tr.addEventListener("click", (e) => {
@@ -1065,13 +1141,16 @@ function renderLogDetail(container, data) {
   }
   const rows = data.healers.map((h) => {
     const color = CLASS_COLORS_HEX[h.wow_class] || "";
+    const sortHps = h.hps != null ? h.hps : -Infinity;
+    const sortParse = h.parse_percent != null ? h.parse_percent : -Infinity;
+    const sortAct = h.active_time_pct != null ? h.active_time_pct : -Infinity;
     return `
-    <tr class="class-${h.wow_class}">
+    <tr class="class-${h.wow_class.replace(/\s+/g, '')}">
       <td><span style="color: ${color} !important; font-weight: 600;">${h.name}</span></td>
       <td>${h.spec}</td>
-      <td class="num">${h.hps != null ? fmtHps(h.hps) : "—"}</td>
-      <td class="num ${percentileClass(h.parse_percent)}">${h.parse_percent != null ? h.parse_percent.toFixed(0) : "—"}</td>
-      <td class="num ${activeClass(h.active_time_pct)}">${h.active_time_pct != null ? h.active_time_pct.toFixed(1) + "%" : "—"}</td>
+      <td class="num" data-sort="${sortHps}">${h.hps != null ? fmtHps(h.hps) : "—"}</td>
+      <td class="num ${percentileClass(h.parse_percent)}" data-sort="${sortParse}">${h.parse_percent != null ? h.parse_percent.toFixed(0) : "—"}</td>
+      <td class="num ${activeClass(h.active_time_pct)}" data-sort="${sortAct}">${h.active_time_pct != null ? h.active_time_pct.toFixed(1) + "%" : "—"}</td>
     </tr>`;
   }).join("");
   container.innerHTML = `
@@ -1084,6 +1163,7 @@ function renderLogDetail(container, data) {
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
+  makeSortable(container.querySelector(".detail-table"));
 }
 
 // ---- Note ---------------------------------------------------------------

@@ -260,6 +260,20 @@ table.results-table .num { text-align: right; font-variant-numeric: tabular-nums
 .detail-table { width: auto; min-width: 360px; margin: 0; font-size: 0.9em; }
 .detail-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 
+/* Sortable table headers (results-table + detail-table). The arrow is part
+   of ::after so it sits flush to the label without shifting layout when it
+   toggles. */
+th.sortable { cursor: pointer; user-select: none; position: relative; }
+th.sortable:hover { color: var(--pico-primary); }
+th.sortable::after {
+  content: "\2195";          /* ↕ neutral indicator */
+  margin-left: 0.25rem;
+  opacity: 0.35;
+  font-size: 0.85em;
+}
+th.sortable.sort-asc::after  { content: "\25B2"; opacity: 1; }   /* ▲ */
+th.sortable.sort-desc::after { content: "\25BC"; opacity: 1; }   /* ▼ */
+
 /* Parse percentile colors (WCL convention) */
 .pct-95 { color: #e268a8; font-weight: 600; }   /* legendary */
 .pct-75 { color: #ff8000; }                      /* epic */
