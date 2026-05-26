@@ -15,7 +15,12 @@ variants. They share no per-line tokens.
     in `tag:<name1,name2>`. No color codes — NSRT colors per-class at
     runtime from the player's class. One line per cast.
     Example:
-        tag:Maver; time:83; spellid:740
+        time:83;ph:1;tag:Maver;spellid:740;
+    Field order, no spaces, and the trailing semicolon match what NSRT's
+    own exporter produces (see the user's note dumps and the addon source).
+    `ph:1` is hardcoded — we don't have phase data, and ph:1 is what the
+    addon assumes when missing. User can hand-edit phase numbers for
+    later-phase casts before pasting.
 """
 from __future__ import annotations
 
@@ -90,9 +95,10 @@ def format_note(
 
 
 def _nsrt_line(name: str, time_s: int, spell_id: int) -> str:
-    """One reminder line in NSRT's `key:value;` format. Order matches what
-    the addon's `BuildFirstLine` exporter produces so it parses cleanly."""
-    return f"tag:{name}; time:{time_s}; spellid:{spell_id}"
+    """One reminder line in NSRT's `key:value;` format. Field order +
+    no-spaces + trailing-semicolon match what the addon's own exporter
+    emits (per the user's reference note dumps)."""
+    return f"time:{time_s};ph:1;tag:{name};spellid:{spell_id};"
 
 
 def _mrt_line(name: str, time_s: int, spell_id: int, spell_label: str, wow_class: str) -> str:
